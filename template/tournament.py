@@ -69,11 +69,20 @@ def _build_context(state: dict) -> dict:
     }
 
 
+def _score_round(args):
+    """Score all candidates against one state. Module-level for multiprocessing pickling."""
+    state, candidates, candidate_names = args
+    scored = [(simulate(c, state), c, n) for c, n in zip(candidates, candidate_names)]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored
+
+
 def run_batch(
     n_rounds: int,
     generation_offset: int = 0,
     hints: list = None,
     use_brain: bool = False,
+    workers: int = 1,
 ) -> dict:
     """
     Run one batch of the tournament.
@@ -117,24 +126,33 @@ def run_batch(
     archetype_wins_nonevent = {}
     context_mix            = {}
 
-    for i in range(n_rounds):
+    # Determine candidates once (same for all rounds in this batch)
+    if archetypes:
+        candidates = [a["strategy"] for a in archetypes]
+        candidate_names = [a["name"] for a in archetypes]
+    else:
+        # Stage 1: use the fixed batch candidates generated above
+        candidates = stage1_candidates
+        candidate_names = stage1_names
+
+    # Generate all states upfront
+    states = [random_state() for _ in range(n_rounds)]
+    contexts = [_build_context(s) for s in states]
+
+    # Score all rounds — parallel if workers > 1
+    if workers > 1:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            all_scored = list(pool.map(
+                _score_round,
+                [(state, candidates, candidate_names) for state in states]
+            ))
+    else:
+        all_scored = [_score_round((state, candidates, candidate_names)) for state in states]
+
+    # Process results sequentially (win tracking, playbook extraction)
+    for i, (scored, state, context) in enumerate(zip(all_scored, states, contexts)):
         round_num = generation_offset + i + 1
-        state = random_state()
-        context = _build_context(state)
-
-        # Determine candidates: archetype library (Stage 2) or procedural (Stage 1)
-        if archetypes:
-            candidates = [a["strategy"] for a in archetypes]
-            candidate_names = [a["name"] for a in archetypes]
-        else:
-            # Stage 1: use the fixed batch candidates generated above
-            candidates = stage1_candidates
-            candidate_names = stage1_names
-
-        # Score all candidates
-        scored = [(simulate(c, state), c, n) for c, n in zip(candidates, candidate_names)]
-        scored.sort(key=lambda x: x[0], reverse=True)
-
         winner_score, winner, winner_name = scored[0]
         losers = [c for _, c, _ in scored[1:4]]
 
