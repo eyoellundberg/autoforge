@@ -1,5 +1,5 @@
 """
-run.py — The Engine CLI.
+run.py — Autoforge CLI.
 
 Five commands that cover the full lifecycle: scaffold a domain, run the
 tournament, inspect state, export training data.
@@ -457,9 +457,9 @@ def cmd_bootstrap(args):
     print(f"\nBootstrapping {args.domain} from description...")
     print("Calling Sonnet to generate domain files...\n")
 
-    system_prompt = """You are designing a simulation domain for The Engine, an autonomous strategy learning system.
+    system_prompt = """You are designing a simulation domain for Autoforge, an autonomous strategy learning system.
 
-The Engine works by:
+Autoforge works by:
 1. Generating a library of 16 named strategy archetypes (via Sonnet)
 2. Running a deterministic simulation that scores each archetype against random scenarios
 3. Extracting conditional principles from what wins
@@ -492,7 +492,7 @@ PROMPT RULES:
 - director.md: context about the domain for the between-batch director. What to watch for, what failure modes exist.
 """
 
-    user_prompt = f"""Generate all domain files for The Engine based on this description:
+    user_prompt = f"""Generate all domain files for Autoforge based on this description:
 
 {args.description}
 
@@ -682,7 +682,7 @@ def cmd_run(args):
     brain_label = "Stage 2 — AI archetypes" if use_brain else ("auto" if auto_mode else "Stage 1 — procedural")
 
     print(f"\n{'='*60}")
-    print(f"The Engine — {args.domain}  [{brain_label}]")
+    print(f"Autoforge — {args.domain}  [{brain_label}]")
     print(f"{args.years} year(s) x {args.batches} batches x {args.rounds} rounds = {args.years * args.batches * args.rounds} total")
     print(f"{'='*60}\n")
 
@@ -1070,7 +1070,7 @@ def cmd_status(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="run.py",
-        description="The Engine — autonomous strategy learning system",
+        description="Autoforge — autonomous strategy learning system",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

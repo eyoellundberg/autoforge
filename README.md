@@ -1,4 +1,4 @@
-# The Engine
+# Autoforge
 
 An autonomous strategy learning system. Describe a domain, run overnight, wake up to a trained local model that makes expert decisions for free.
 
@@ -7,7 +7,7 @@ An autonomous strategy learning system. Describe a domain, run overnight, wake u
 ## Installation
 
 ```bash
-git clone https://github.com/eyoellundberg/engine
+git clone https://github.com/eyoellundberg/autoforge
 cd engine
 pip install -e .   # installs anthropic + rich, adds 'engine' CLI alias
 ```
@@ -34,13 +34,13 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 **A local model is trained on what the simulation proved.** XGBoost for numerical domains (grain pricing, demand scoring, rates). A fine-tuned small LLM for language domains (classification, routing, document scoring). Either way: runs locally, zero API cost, forever.
 
-**Inspired by Karpathy's autoresearch — but generalized.** autoresearch autonomously improves a language model training loop. The Engine autonomously learns any structured decision domain.
+**Inspired by Karpathy's autoresearch — but generalized.** autoresearch autonomously improves a language model training loop. Autoforge autonomously learns any structured decision domain.
 
 ---
 
 ## Two Filters
 
-If both are true, The Engine can learn it:
+If both are true, Autoforge can learn it:
 
 1. **Can the job be described in a markdown file?** If someone can write what the job is, what good output looks like, and what the inputs are — the Engine can learn it.
 
@@ -51,7 +51,7 @@ If both are true, The Engine can learn it:
 ## Quickstart
 
 ```bash
-git clone https://github.com/eyoellundberg/engine
+git clone https://github.com/eyoellundberg/autoforge
 cd engine
 pip install anthropic rich
 
@@ -307,9 +307,9 @@ Tighter budget: swap Sonnet for Haiku everywhere. More quality: use Opus for the
 
 Karpathy's autoresearch autonomously improves a language model training loop: one experiment at a time, agent modifies `train.py`, runs for 5 minutes, checks `val_bpb`, keeps or discards. Elegant and simple.
 
-The Engine generalizes this to any structured decision domain:
+Autoforge generalizes this to any structured decision domain:
 
-| | autoresearch | The Engine |
+| | autoresearch | Autoforge |
 |---|---|---|
 | Strategy space | Open-ended (any code change) | Constrained (CANDIDATE_SCHEMA) |
 | Experiments | One at a time, 5 min each | 16 simultaneously, milliseconds |
@@ -317,7 +317,7 @@ The Engine generalizes this to any structured decision domain:
 | Output | Improved train.py | Trained local model |
 | Domain | Language model training | Any structured decision |
 
-Both are valid. autoresearch goes deep on one idea. The Engine goes wide across many simultaneously, then distills what won into a deployable model.
+Both are valid. autoresearch goes deep on one idea. Autoforge goes wide across many simultaneously, then distills what won into a deployable model.
 
 ---
 

@@ -1,5 +1,5 @@
 """
-engine_extract.py — Generic AI-driven principle extractor for The Engine.
+engine_extract.py — Generic AI-driven principle extractor for Autoforge.
 
 Any domain with a prompts/extract.md gets intelligent principle extraction.
 Called every 10 rounds by the domain's tournament.py. ~$0.002/call at Haiku pricing.

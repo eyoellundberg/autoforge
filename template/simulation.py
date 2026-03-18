@@ -1,11 +1,11 @@
 """
 simulation.py — The scoring function for your domain.
 
-This is the only file that knows what your domain is. The Engine calls it
+This is the only file that knows what your domain is. Autoforge calls it
 to evaluate candidate strategies deterministically — no AI, no randomness
 after the scenario is drawn.
 
-REQUIRED EXPORTS (the Engine reads these directly):
+REQUIRED EXPORTS (Autoforge reads these directly):
   - simulate(candidate, state) -> float      score a candidate against a scenario
   - random_state() -> dict                   draw a random scenario
   - CANDIDATE_SCHEMA: dict                   JSON schema for a candidate strategy
@@ -22,7 +22,7 @@ import random
 
 # ── What a candidate strategy looks like ─────────────────────────────────────
 #
-# This schema tells the Engine (and Sonnet) what shape a strategy has.
+# This schema tells Autoforge (and Sonnet) what shape a strategy has.
 # The AI generates candidates that match this schema exactly.
 # Be as specific as you can — vague schemas produce vague strategies.
 #
@@ -54,13 +54,13 @@ METRIC_NAME = "score"  # e.g. "profit", "revpar", "accuracy", "throughput"
 # ── Scenario generation ───────────────────────────────────────────────────────
 #
 # Draw a random scenario from your domain's distribution.
-# The Engine calls this once per round to generate the test case.
+# Autoforge calls this once per round to generate the test case.
 # Keep it realistic — the sim is only as good as its scenario variety.
 #
 def random_state() -> dict:
     """
     Return a dict describing a single scenario.
-    The Engine passes this to simulate() along with the candidate strategy.
+    Autoforge passes this to simulate() along with the candidate strategy.
 
     Example keys: demand level, competition, time period, context flags.
     """

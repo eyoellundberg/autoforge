@@ -1,7 +1,7 @@
 [project]
-name = "the-engine"
+name = "autoforge"
 version = "0.1.0"
-description = "Autonomous domain learning via simulation tournament + AI direction"
+description = "Autonomous strategy learning via simulation tournament + AI direction"
 requires-python = ">=3.10"
 dependencies = [
     "anthropic>=0.50.0",
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-engine = "run:main"
+autoforge = "run:main"
 
 [build-system]
 requires = ["hatchling"]

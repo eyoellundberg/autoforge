@@ -1,5 +1,5 @@
 """
-engine_brain.py — Generic archetype library generator for The Engine.
+engine_brain.py — Generic archetype library generator for Autoforge.
 
 Any domain with a prompts/brain.md and simulation.CANDIDATE_SCHEMA gets a
 fully functional strategy library generator. Replaces hardcoded brain.py
