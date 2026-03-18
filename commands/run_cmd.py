@@ -3,7 +3,6 @@ commands/run_cmd.py — cmd_run subcommand (tournament runner).
 """
 
 import json
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -33,10 +32,7 @@ def cmd_run(args):
     # Load .env: domain folder first, then engine root as fallback
     load_env(domain_path)
 
-    sys.path.insert(0, str(domain_path))
-    os.chdir(domain_path)
-
-    from tournament import run_batch
+    from engine_tournament import run_batch
 
     thinking_log = domain_path / "thinking_log.md"
     if not thinking_log.exists():
@@ -90,6 +86,7 @@ def cmd_run(args):
 
             try:
                 result = run_batch(
+                    domain_path,
                     args.rounds,
                     generation_offset=generation_offset,
                     hints=hints,

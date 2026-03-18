@@ -112,49 +112,21 @@ Requirements:
         (prompts_path / "extract.md").write_text(data["extract_md"])
         (prompts_path / "director.md").write_text(data["director_md"])
 
-        # 4. Generate _build_context() body from context_keys — edit tournament.py
+        # 4. Append build_context() to simulation.py using context_keys
         context_keys = data["context_keys"]
-        tournament_path = domain_path / "tournament.py"
-        tournament_text = tournament_path.read_text()
-
-        # Build the new _build_context() body lines
-        return_lines = []
-        for key in context_keys:
-            return_lines.append(f'        "{key}": state.get("{key}"),')
-        return_body = "\n".join(return_lines)
-
-        old_build_context = '''def _build_context(state: dict) -> dict:
+        context_lines = "\n".join(
+            f'        "{k}": state.get("{k}"),' for k in context_keys
+        )
+        build_context_fn = f'''\n\ndef build_context(state: dict) -> dict:
     """
-    Build the context dict passed to the AI extractor.
-
-    These key-value pairs describe the scenario in plain terms — the AI reads
-    them to extract conditional principles ("IF demand is high AND competition is low...").
-
-    Make these human-readable. The AI's extraction quality depends on this.
-    """
-    # TODO: adapt this to your actual state dict structure
-    return {
-        "demand":      state.get("demand", "unknown"),
-        "competition": state.get("competition", "unknown"),
-        "context_flag": state.get("context_flag", False),
-        # Add more domain-relevant context here
-    }'''
-
-        new_build_context = f'''def _build_context(state: dict) -> dict:
-    """
-    Build the context dict passed to the AI extractor.
-
-    These key-value pairs describe the scenario in plain terms — the AI reads
-    them to extract conditional principles ("IF demand is high AND competition is low...").
-
-    Make these human-readable. The AI's extraction quality depends on this.
+    Human-readable scenario description for AI principle extraction.
+    These key-value pairs appear in the extractor prompt as conditional context.
     """
     return {{
-{return_body}
-    }}'''
-
-        tournament_text = tournament_text.replace(old_build_context, new_build_context)
-        tournament_path.write_text(tournament_text)
+{context_lines}
+    }}\n'''
+        sim_text = (domain_path / "simulation.py").read_text()
+        (domain_path / "simulation.py").write_text(sim_text + build_context_fn)
 
         # 5. Write mission.md — the human-readable control file
         mission_text = f"""# Mission — {args.domain}

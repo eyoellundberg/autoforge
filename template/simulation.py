@@ -138,3 +138,13 @@ def simulate(candidate: dict, state: dict) -> float:
         modifier = 0.9
 
     return base_score * modifier
+
+
+def build_context(state: dict) -> dict:
+    """
+    Human-readable scenario description for AI principle extraction.
+    These key-value pairs appear in the extractor prompt as conditional context.
+    Adapt to your actual state dict keys — make values human-readable.
+    """
+    # TODO: return the keys from random_state() that matter for principle extraction
+    return {k: v for k, v in state.items()}
