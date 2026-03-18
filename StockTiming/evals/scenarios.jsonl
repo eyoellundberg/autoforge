@@ -1,0 +1,4 @@
+{"id": "strong_uptrend", "state": {"regime": "trending_up", "volatility": 0.008, "trend_strength": 0.0015, "n_bars": 120, "noise_seed": 42, "is_event": false}, "description": "strong uptrend — momentum strategy should profit", "min_score": 2.0}
+{"id": "strong_downtrend", "state": {"regime": "trending_down", "volatility": 0.008, "trend_strength": -0.0015, "n_bars": 120, "noise_seed": 77, "is_event": false}, "description": "strong downtrend — strategy should avoid losses", "min_score": -1.0}
+{"id": "ranging_market", "state": {"regime": "ranging", "volatility": 0.012, "trend_strength": 0.0001, "n_bars": 90, "noise_seed": 123, "is_event": false}, "description": "ranging market — should preserve capital", "min_score": -2.0}
+{"id": "event_spike", "state": {"regime": "volatile", "volatility": 0.02, "trend_strength": 0.0005, "n_bars": 90, "noise_seed": 999, "is_event": true}, "description": "event spike — strategy must survive sharp move", "min_score": -3.0}

@@ -1,0 +1,9 @@
+{
+  "name": "StockTiming",
+  "version": "1.0.0",
+  "author": "autoforge",
+  "description": "Moving average crossover parameter optimization across market regimes. Example domain — use to verify the loop before building your own.",
+  "metric": "pnl",
+  "autoforge_version": "1.0",
+  "evals": "evals/scenarios.jsonl"
+}
