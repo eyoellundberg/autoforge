@@ -123,7 +123,7 @@ import argparse
 
 from commands.bootstrap import cmd_bootstrap, cmd_new
 from commands.run_cmd import cmd_run
-from commands.tools import cmd_calibrate, cmd_validate, cmd_export, cmd_status
+from commands.tools import cmd_calibrate, cmd_validate, cmd_export, cmd_status, cmd_pack, cmd_install, cmd_eval, cmd_import
 
 
 def main():
@@ -170,6 +170,24 @@ def main():
     p_status = subparsers.add_parser("status", help="Show domain state")
     p_status.add_argument("--domain", required=True, help="Domain subfolder name")
 
+    # pack
+    p_pack = subparsers.add_parser("pack", help="Bundle a domain into a shareable .zip")
+    p_pack.add_argument("domain", help="Domain name")
+
+    # install
+    p_install = subparsers.add_parser("install", help="Install a domain pack from a .zip file")
+    p_install.add_argument("pack", help="Path to .zip pack file")
+    p_install.add_argument("--force", action="store_true", help="Overwrite if domain already exists")
+
+    # eval
+    p_eval = subparsers.add_parser("eval", help="Run champion against eval scenarios")
+    p_eval.add_argument("--domain", required=True, help="Domain subfolder name")
+
+    # import
+    p_import = subparsers.add_parser("import", help="Import real production decisions into training data")
+    p_import.add_argument("--domain", required=True, help="Domain subfolder name")
+    p_import.add_argument("--file",   required=True, help="Path to JSONL file of real decisions")
+
     args = parser.parse_args()
 
     if args.command == "bootstrap":
@@ -186,3 +204,11 @@ def main():
         cmd_export(args)
     elif args.command == "status":
         cmd_status(args)
+    elif args.command == "pack":
+        cmd_pack(args)
+    elif args.command == "install":
+        cmd_install(args)
+    elif args.command == "eval":
+        cmd_eval(args)
+    elif args.command == "import":
+        cmd_import(args)

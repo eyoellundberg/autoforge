@@ -124,8 +124,7 @@ def cmd_run(args):
             trend_char = "+" if result["trend_pct"] >= 0 else ""
             print(f"  ->  avg {result['avg_score']}  best {result['best_score']}  trend {trend_char}{result['trend_pct']:.1f}%")
 
-            has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-            if has_api_key:
+            if use_brain:
                 print(f"  director analyzing...", end="", flush=True)
                 try:
                     analysis = call_director(global_batch, result, prior_analysis, all_results, domain_path, playbook_sizes)
@@ -135,21 +134,28 @@ def cmd_run(args):
                     print(f"  -> {analysis['next_batch_focus'][:80]}")
                     if analysis["concerns"]:
                         print(f"  ! {analysis['concerns'][0]}")
+                    if verdict == "needs_calibration" and analysis.get("simulation_fix_suggestions"):
+                        console.print("\n[yellow bold]Simulation fix suggestions:[/yellow bold]")
+                        for fix in analysis["simulation_fix_suggestions"]:
+                            console.print(f"  [yellow]• {fix}[/yellow]")
+                        console.print(f"[dim]  Edit {args.domain}/simulation.py and re-run calibrate.[/dim]\n")
                 except Exception as e:
                     print(f"  [director error: {e}] — continuing")
                     analysis = {"verdict": "exploring", "hints": hints, "retire_principles": [],
                                 "next_batch_focus": "director unavailable — continuing previous hints",
                                 "observations": [], "principles_gaining_confidence": [],
-                                "concerns": [], "mistakes_to_note": []}
+                                "concerns": [], "mistakes_to_note": [],
+                                "simulation_fix_suggestions": []}
                     verdict = "exploring"
             else:
-                # Stage 1 free mode — no director without API key
+                # Stage 1 free mode — director only runs with --brain or after --auto promotion
                 analysis = {"verdict": "exploring", "hints": [], "retire_principles": [],
-                            "next_batch_focus": "Stage 1 — set ANTHROPIC_API_KEY to enable director",
+                            "next_batch_focus": "Stage 1 — use --brain or --auto to enable director",
                             "observations": [], "principles_gaining_confidence": [],
-                            "concerns": [], "mistakes_to_note": []}
+                            "concerns": [], "mistakes_to_note": [],
+                            "simulation_fix_suggestions": []}
                 verdict = "exploring"
-                print(f"  [Stage 1 — no director]")
+                print(f"  [Stage 1]")
             print()
 
             # Store row for summary table
@@ -172,7 +178,15 @@ def cmd_run(args):
             git_commit_batch(args.domain, domain_path, global_batch, result, analysis)
 
             if verdict == "reward_hacking":
-                print("! Reward hacking flagged — stopping run. Check thinking_log.md.")
+                print("! Reward hacking flagged — stopping run.")
+                fixes = analysis.get("simulation_fix_suggestions", [])
+                if fixes:
+                    console.print("\n[red bold]Simulation fix suggestions:[/red bold]")
+                    for fix in fixes:
+                        console.print(f"  [red]• {fix}[/red]")
+                    console.print(f"\n[dim]Edit {args.domain}/simulation.py, then re-run calibrate.[/dim]")
+                else:
+                    print(f"  Check thinking_log.md for details.")
                 stop_reason = "reward_hacking"
                 year_avg_scores.append(round(sum(r["avg_score"] for r in all_results) / len(all_results), 2))
                 break

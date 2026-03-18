@@ -156,12 +156,52 @@ Requirements:
         tournament_text = tournament_text.replace(old_build_context, new_build_context)
         tournament_path.write_text(tournament_text)
 
-        # 5. Write .env with ANTHROPIC_API_KEY placeholder
-        (domain_path / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-...\n")
+        # 5. Write mission.md — the human-readable control file
+        mission_text = f"""# Mission — {args.domain}
 
-        # 6. Create data/ directory inside domain_path
+## Job
+{data["domain_summary"]}
+
+## What good looks like
+[Edit this: what outcomes indicate the specialist is working?
+ Be specific — numbers, thresholds, observable behaviors.]
+
+## Abstain when
+[Edit this: when should the specialist refuse to act and escalate to a human?]
+
+## Failure
+[Edit this: what does a bad outcome look like? What must never happen?]
+
+---
+*This file is the human-readable contract for the specialist.
+simulation.py is the technical implementation of it.*
+"""
+        (domain_path / "mission.md").write_text(mission_text)
+
+        # 7. Write .env with ANTHROPIC_API_KEY placeholder
+        (domain_path / ".env").write_text("# ANTHROPIC_API_KEY=sk-ant-...\n")
+
+        # 8. Create data/ directory inside domain_path
         (domain_path / "data").mkdir(exist_ok=True)
         (domain_path / "data" / ".gitkeep").touch()
+
+        # 9. Write pack.json manifest
+        pack = {
+            "name": args.domain,
+            "version": "1.0.0",
+            "author": "",
+            "description": data["domain_summary"],
+            "metric": data["metric_name"],
+            "autoforge_version": "1.0",
+            "evals": "evals/scenarios.jsonl",
+        }
+        (domain_path / "pack.json").write_text(json.dumps(pack, indent=2) + "\n")
+
+        # 8. Create evals/ folder with empty scenarios file
+        (domain_path / "evals").mkdir(exist_ok=True)
+        (domain_path / "evals" / "scenarios.jsonl").write_text(
+            "# Add eval scenarios here. Format: {\"id\": \"...\", \"state\": {...}, \"description\": \"...\", \"min_score\": 0}\n"
+        )
 
     except Exception as e:
         print(f"Error: Failed to write domain files: {e}")

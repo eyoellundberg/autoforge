@@ -37,13 +37,14 @@ def _save_playbook(playbook: list):
             f.write(json.dumps(entry) + "\n")
 
 
-def _log_round(log_path: Path, round_num: int, winner: dict, score: float, state: dict, archetype_name: str = None):
+def _log_round(log_path: Path, round_num: int, winner: dict, score: float, state: dict, archetype_name: str = None, score_margin: float = 0.0):
     entry = {
-        "round":  round_num,
-        "score":  score,
-        "metric": METRIC_NAME,
-        "winner": winner,
-        "state":  state,
+        "round":        round_num,
+        "score":        score,
+        "score_margin": score_margin,
+        "metric":       METRIC_NAME,
+        "winner":       winner,
+        "state":        state,
     }
     if archetype_name:
         entry["archetype"] = archetype_name
@@ -155,9 +156,10 @@ def run_batch(
         round_num = generation_offset + i + 1
         winner_score, winner, winner_name = scored[0]
         losers = [c for _, c, _ in scored[1:4]]
+        score_margin = round(scored[0][0] - scored[1][0], 4) if len(scored) > 1 else 0.0
 
         scores.append(winner_score)
-        _log_round(log_path, round_num, winner, winner_score, state, winner_name)
+        _log_round(log_path, round_num, winner, winner_score, state, winner_name, score_margin)
 
         # Track archetype win counts
         if winner_name not in archetype_wins:
@@ -207,9 +209,10 @@ def run_batch(
     # Works for both Stage 1 (procedural) and Stage 2 (archetypes).
     # The next Stage 1 batch reads top_candidates.json and evolves from these winners.
     if archetypes:
-        # Stage 2: rank archetypes by total wins (nonevent + event)
+        # Stage 2: rank by total wins. Weight non-event wins 2x since event wins
+        # can be sim artifacts (guaranteed demand when event fires).
         top_n = sorted(
-            [(archetype_wins_nonevent.get(a["name"], 0) + archetype_wins.get(a["name"], 0), a["strategy"], a["name"])
+            [(archetype_wins_nonevent.get(a["name"], 0) * 2 + archetype_wins_event.get(a["name"], 0), a["strategy"], a["name"])
              for a in archetypes],
             key=lambda x: x[0],
             reverse=True,

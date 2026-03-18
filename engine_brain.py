@@ -125,6 +125,29 @@ def generate_library_prompt(playbook: list, hints: list, domain_path: Path) -> s
     return "\n".join(lines)
 
 
+def _clamp_strategy(strategy: dict, schema: dict) -> dict:
+    """Clamp strategy values to schema bounds after API generation."""
+    props = schema.get("properties", {})
+    result = {}
+    for key, spec in props.items():
+        val = strategy.get(key)
+        if val is None:
+            result[key] = val
+            continue
+        t = spec.get("type")
+        if t == "number":
+            lo, hi = spec.get("minimum", float("-inf")), spec.get("maximum", float("inf"))
+            result[key] = max(lo, min(hi, float(val)))
+        elif t == "integer":
+            lo, hi = spec.get("minimum", float("-inf")), spec.get("maximum", float("inf"))
+            result[key] = max(int(lo), min(int(hi), int(round(float(val)))))
+        elif "enum" in spec:
+            result[key] = val if val in spec["enum"] else spec["enum"][0]
+        else:
+            result[key] = val
+    return result
+
+
 def call_library(
     playbook: list,
     hints: list,
@@ -168,7 +191,10 @@ def call_library(
                 },
             )
             data = json.loads(response.content[0].text)
-            return data["archetypes"]
+            archetypes = data["archetypes"]
+            for arch in archetypes:
+                arch["strategy"] = _clamp_strategy(arch["strategy"], candidate_schema)
+            return archetypes
         except Exception as e:
             if attempt == 0:
                 continue

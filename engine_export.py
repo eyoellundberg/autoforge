@@ -177,7 +177,7 @@ def export_training_data(domain_path: Path):
             written += 1
 
     if domain_type == "numerical":
-        # Build CSV: state keys + winner keys + score column
+        # Build CSV: state keys + winner keys + score + score_margin + uncertain columns
         # Collect all state and winner keys from kept entries
         state_keys  = []
         winner_keys = []
@@ -191,8 +191,19 @@ def export_training_data(domain_path: Path):
                 if k not in winner_keys:
                     winner_keys.append(k)
 
+        # Compute p25 of score_margin across all kept entries
+        all_margins = [e.get("score_margin", None) for _, e in kept]
+        has_margins = any(m is not None for m in all_margins)
+        if has_margins:
+            margin_values = sorted(m for m in all_margins if m is not None)
+            p25_idx = max(0, int(len(margin_values) * 0.25) - 1)
+            p25_margin = margin_values[p25_idx] if margin_values else 0.0
+        else:
+            p25_margin = None
+
         csv_path = domain_path / "training_features.csv"
-        fieldnames = state_keys + winner_keys + ["score"]
+        extra_cols = ["score", "score_margin", "uncertain"] if has_margins else ["score"]
+        fieldnames = state_keys + winner_keys + extra_cols
         n_cols = len(fieldnames)
 
         with open(csv_path, "w", newline="") as csvfile:
@@ -210,19 +221,45 @@ def export_training_data(domain_path: Path):
                 for k in winner_keys:
                     row[k] = winner.get(k, "")
                 row["score"] = score
+                if has_margins:
+                    margin = entry.get("score_margin", 0.0)
+                    row["score_margin"] = margin
+                    row["uncertain"] = 1 if margin < p25_margin else 0
                 writer.writerow(row)
                 csv_rows += 1
 
         domain_name = domain_path.name
         print(f"\nDomain type: numerical")
-        print(f"  training_features.csv  — {csv_rows} rows, {n_cols} columns (use with XGBoost/sklearn)")
-        print(f"  training_data.jsonl    — {written} examples (use with MLX-LM if preferred)")
+        print(f"  training_features.csv  — {csv_rows} rows, {n_cols} columns")
+        print(f"  training_data.jsonl    — {written} examples (MLX-LM fine-tuning)")
         print(f"""
-For XGBoost:
-  import pandas as pd, xgboost as xgb
+This is a reward model dataset: features = state + strategy, label = score.
+Inference pattern: generate N candidate strategies, score each with XGBoost, pick the best.
+
+  import pandas as pd, xgboost as xgb, numpy as np
   df = pd.read_csv('{domain_name}/training_features.csv')
-  # features: all columns except the last (score)
-  # label: last column (score)""")
+  feature_cols = [c for c in df.columns if c != 'score']
+  X, y = df[feature_cols].values, df['score'].values
+  model = xgb.train({{'max_depth': 4, 'eta': 0.1, 'objective': 'reg:squarederror'}},
+                    xgb.DMatrix(X, label=y), num_boost_round=200)
+
+  # Inference: score N candidates, pick the best
+  def best_strategy(state: dict, candidates: list) -> dict:
+      rows = np.array([[*state.values(), *c.values()] for c in candidates])
+      scores = model.predict(xgb.DMatrix(rows))
+      return candidates[int(np.argmax(scores))]""")
+
+        if has_margins and p25_margin is not None:
+            print(f"""
+Abstention pattern (recommended):
+  # At inference time, if the top candidate's predicted score advantage is small,
+  # escalate rather than act.
+  ABSTAIN_THRESHOLD = {round(p25_margin, 3)}  # bottom 25% of training margins
+  scores = model.predict(xgb.DMatrix(candidate_rows))
+  if scores.max() - np.median(scores) < ABSTAIN_THRESHOLD:
+      print("ABSTAIN: strategies are too close — escalate to human")
+  else:
+      best = candidates[int(np.argmax(scores))]""")
 
     else:
         domain_name = domain_path.name

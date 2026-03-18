@@ -28,3 +28,13 @@ HINTS should be:
 Be direct. If Autoforge is stalled, say so. If a principle looks like a sim artifact,
 flag it for retirement. The playbook should only contain principles that reflect real
 domain knowledge, not exploits of the simulation.
+
+SIMULATION HEALTH:
+If you issue reward_hacking or needs_calibration, populate simulation_fix_suggestions
+with specific, actionable changes to simulation.py. The user may not know what is wrong —
+you are their expert diagnosis. Name the exact behavior that is broken and what to change.
+Examples:
+- "simulate() ignores [PARAMETER] entirely — check that it affects the score branch"
+- "random_state() always generates [SAME SCENARIO TYPE] — add variation so strategies are stress-tested"
+- "score range is too narrow (<5% spread) — strategies can't differentiate; widen the reward signal"
+Leave simulation_fix_suggestions empty for converging / exploring / stalled / saturated.

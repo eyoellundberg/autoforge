@@ -45,11 +45,15 @@ DIRECTOR_SCHEMA = {
             "type": "array", "items": {"type": "string"},
             "description": "Topic names to remove from the playbook before the next batch.",
         },
+        "simulation_fix_suggestions": {
+            "type": "array", "items": {"type": "string"},
+            "description": "Concrete, actionable suggestions for fixing simulation.py when reward_hacking or needs_calibration is detected. Empty otherwise.",
+        },
     },
     "required": [
         "verdict", "observations", "principles_gaining_confidence",
         "concerns", "mistakes_to_note", "next_batch_focus", "hints",
-        "retire_principles",
+        "retire_principles", "simulation_fix_suggestions",
     ],
     "additionalProperties": False,
 }
@@ -87,11 +91,16 @@ def call_director(
 ) -> dict:
     """Ask the director AI to analyze the batch and direct the next one."""
 
+    director_md = domain_path / "prompts" / "director.md"
+    domain_context = director_md.read_text().strip() if director_md.exists() else ""
+
     system_prompt = (
         "You are an expert analyst directing an autonomous learning engine. "
         "Be specific and actionable. Identify real learning vs sim artifacts. "
         "Keep observations concise — 2-4 items each."
     )
+    if domain_context:
+        system_prompt = domain_context + "\n\n" + system_prompt
 
     # Trend across all batches so far
     batch_avgs = [r["avg_score"] for r in all_results]
@@ -180,6 +189,16 @@ Use it when a principle is a confirmed sim artifact, suppressing real exploratio
 Available topics in the current playbook: {playbook_topics}
 GUARDRAIL: principles with confidence >=88% are protected and cannot be retired — do not list them.
 Cap retirements at 2 per batch. Only retire if you have clear evidence the principle is wrong or harmful.
+
+simulation_fix_suggestions: REQUIRED when verdict is reward_hacking or needs_calibration.
+The user may not know what is wrong with their simulation.py — you are their expert diagnosis.
+Be specific: name the exact behavior that is broken and what to change in simulate() or random_state().
+Examples of good suggestions:
+  - "simulate() always returns positive scores even when the strategy should fail — add a penalty branch for [CONDITION]"
+  - "random_state() never generates [SCENARIO TYPE] — add a case so strategies are tested under that condition"
+  - "score range is 0.95–1.05 — too narrow for strategies to differentiate; widen the reward spread"
+  - "one parameter (e.g. threshold) has no effect on score — simulate() may not be reading it"
+Leave empty [] for converging / exploring / stalled / saturated.
 """
 
     import anthropic
@@ -226,6 +245,8 @@ def append_thinking_log(log_path: Path, batch_num: int, result: dict, analysis: 
 
 **Hints injected for next batch:**
 {chr(10).join(f"- {h}" for h in analysis['hints']) or "- none"}
+
+{("**Simulation fix suggestions:**\n" + chr(10).join(f"- {s}" for s in analysis.get('simulation_fix_suggestions', []))) if analysis.get('simulation_fix_suggestions') else ""}
 
 ---"""
 

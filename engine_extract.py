@@ -63,10 +63,18 @@ def _merge(new_principles: list, existing: list) -> list:
     Key: topic — same topic updates rather than duplicates.
     Max 2 per topic, max 60 total. Higher confidence wins on collision.
     """
+    def _normalize_conf(p: dict) -> dict:
+        conf = p.get("confidence", 0)
+        if conf > 1.0:
+            p = {**p, "confidence": conf / 100.0}
+        return p
+
     by_topic: dict = defaultdict(list)
     for p in existing:
+        p = _normalize_conf(p)
         by_topic[p.get("topic", p["principle"][:30])].append(p)
     for p in new_principles:
+        p = _normalize_conf(p)
         by_topic[p["topic"]].append(p)
 
     kept = []

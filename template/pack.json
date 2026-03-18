@@ -1,0 +1,9 @@
+{
+  "name": "MyDomain",
+  "version": "1.0.0",
+  "author": "",
+  "description": "",
+  "metric": "",
+  "autoforge_version": "1.0",
+  "evals": "evals/scenarios.jsonl"
+}
