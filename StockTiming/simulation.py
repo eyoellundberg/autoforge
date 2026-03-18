@@ -132,3 +132,17 @@ def simulate(candidate: dict, state: dict) -> float:
         capital += pnl
 
     return round((capital - 1.0) * 100, 4)  # return as % PnL
+
+
+def build_context(state: dict) -> dict:
+    """
+    Human-readable scenario description for AI principle extraction.
+    These key-value pairs appear in the extractor prompt as conditional context.
+    """
+    return {
+        "regime":         state.get("regime"),
+        "volatility":     state.get("volatility"),
+        "trend_strength": state.get("trend_strength"),
+        "n_bars":         state.get("n_bars"),
+        "is_event":       state.get("is_event"),
+    }
