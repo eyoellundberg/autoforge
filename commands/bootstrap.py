@@ -3,10 +3,11 @@ commands/bootstrap.py — cmd_bootstrap and cmd_new subcommands.
 """
 
 import json
+import os
 import shutil
 import sys
 
-from commands.shared import ENGINE_ROOT, BOOTSTRAP_SCHEMA
+from commands.shared import ENGINE_ROOT, BOOTSTRAP_SCHEMA, structured_ai_call
 
 
 def cmd_bootstrap(args):
@@ -20,6 +21,9 @@ def cmd_bootstrap(args):
     if not template_path.exists():
         print("Error: template/ folder not found.")
         sys.exit(1)
+
+    if getattr(args, "manual_ai", False):
+        os.environ["AUTOFORGE_AI_BACKEND"] = "manual"
 
     print(f"\nBootstrapping {args.domain} from description...")
     print("Calling Sonnet to generate domain files...\n")
@@ -74,25 +78,20 @@ Requirements:
 - domain_summary: 1-2 sentence description of what this domain learns
 """
 
-    import anthropic
-    client = anthropic.Anthropic()
-
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
+        backend_domain_path = domain_path.parent if domain_path.parent.exists() else ENGINE_ROOT
+        data = structured_ai_call(
+            task_name="bootstrap",
+            domain_path=backend_domain_path,
+            model=os.environ.get("AUTOFORGE_LIBRARY_MODEL", "claude-sonnet-4-6"),
             max_tokens=8000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-            output_config={
-                "format": {
-                    "type": "json_schema",
-                    "schema": BOOTSTRAP_SCHEMA,
-                }
-            },
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema=BOOTSTRAP_SCHEMA,
+            metadata={"domain": args.domain},
         )
-        data = json.loads(response.content[0].text)
     except Exception as e:
-        print(f"Error: Anthropic API call failed: {e}")
+        print(f"Error: bootstrap AI call failed: {e}")
         # Clean up partial domain folder if it was created
         if domain_path.exists():
             shutil.rmtree(domain_path)
@@ -210,16 +209,17 @@ def cmd_new(args):
     shutil.copytree(template_path, domain_path)
 
     env_file = domain_path / ".env"
-    env_file.write_text("ANTHROPIC_API_KEY=sk-ant-...\n")
+    env_file.write_text("# ANTHROPIC_API_KEY=sk-ant-...\n")
 
     print(f"\nCreated {args.domain}/")
     print()
     print("Next steps:")
-    print(f"  1. Edit {args.domain}/simulation.py — implement simulate(), random_state(), CANDIDATE_SCHEMA, METRIC_NAME")
-    print(f"  2. Edit {args.domain}/prompts/brain.md — tell Sonnet what archetypes to generate")
-    print(f"  3. Edit {args.domain}/prompts/extract.md — tell Haiku what principles to extract")
-    print(f"  4. Edit {args.domain}/prompts/director.md — context for the batch director")
-    print(f"  5. Set your API key in {args.domain}/.env")
+    print(f"  1. Edit {args.domain}/mission.md — define success, abstention, and failure")
+    print(f"  2. Edit {args.domain}/simulation.py — implement simulate(), random_state(), CANDIDATE_SCHEMA, METRIC_NAME")
+    print(f"  3. Edit {args.domain}/prompts/brain.md — tell Sonnet what archetypes to generate")
+    print(f"  4. Edit {args.domain}/prompts/extract.md — tell Haiku what principles to extract")
+    print(f"  5. Edit {args.domain}/prompts/director.md — context for the batch director")
+    print(f"  6. Set your API key in {args.domain}/.env")
     print()
     print("Then run:")
     print(f"  python run.py run --domain {args.domain}                  # Stage 1, no API calls")

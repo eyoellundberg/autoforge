@@ -7,7 +7,7 @@ import sys
 
 from rich.table import Table
 
-from commands.shared import ENGINE_ROOT, console, load_env
+from commands.shared import ENGINE_ROOT, console, load_env, normalize_confidence
 
 
 def _print_validation(ok: list, warnings: list, errors: list):
@@ -335,7 +335,7 @@ def cmd_status(args):
     pb_path = domain_path / "playbook.jsonl"
     if pb_path.exists():
         playbook = [json.loads(l) for l in pb_path.read_text().splitlines() if l.strip()]
-        top5 = sorted(playbook, key=lambda p: p.get("confidence", 0), reverse=True)[:5]
+        top5 = sorted(playbook, key=lambda p: normalize_confidence(p.get("confidence", 0)), reverse=True)[:5]
         tbl = Table(title=f"Playbook — {len(playbook)} principles", show_header=True)
         tbl.add_column("Topic")
         tbl.add_column("Conf", justify="right")
@@ -343,7 +343,7 @@ def cmd_status(args):
         for p in top5:
             tbl.add_row(
                 p.get("topic", ""),
-                f"{p.get('confidence', 0):.0%}",
+                f"{normalize_confidence(p.get('confidence', 0)):.0%}",
                 p.get("principle", "")[:60],
             )
         console.print(tbl)
@@ -389,6 +389,8 @@ def cmd_status(args):
     # Tournament log + training data
     log_path = domain_path / "tournament_log.jsonl"
     td_path  = domain_path / "training_data.jsonl"
+    pref_path = domain_path / "training_preferences.jsonl"
+    threshold_path = domain_path / "abstain_threshold.json"
     if log_path.exists():
         try:
             n_rounds = sum(1 for l in log_path.read_text().splitlines() if l.strip())
@@ -399,6 +401,12 @@ def cmd_status(args):
                 msg += f"   training_data.jsonl: {n_td} examples (ready)"
             else:
                 msg += "   training_data.jsonl: not yet exported"
+            if pref_path.exists():
+                n_pref = sum(1 for l in pref_path.read_text().splitlines() if l.strip())
+                msg += f"   training_preferences.jsonl: {n_pref} pairs"
+            if threshold_path.exists():
+                threshold = json.loads(threshold_path.read_text()).get("threshold")
+                msg += f"   abstain_threshold: {threshold}"
             console.print(f"\n[dim]{msg}[/dim]")
         except Exception:
             pass
@@ -406,7 +414,7 @@ def cmd_status(args):
 
 def cmd_pack(args):
     """Bundle a domain into a shareable .zip pack."""
-    import zipfile, datetime
+    import zipfile
 
     domain_path = ENGINE_ROOT / args.domain
     if not domain_path.exists():
@@ -441,7 +449,7 @@ def cmd_pack(args):
     # Files to include in the pack
     include = [
         "simulation.py",
-        "tournament.py",
+        "mission.md",
         "pack.json",
         "prompts/brain.md",
         "prompts/extract.md",
@@ -449,6 +457,7 @@ def cmd_pack(args):
         "playbook.jsonl",
         "champion_archetype.json",
         "top_candidates.json",
+        "abstain_threshold.json",
     ]
     # Include evals/ folder if it exists
     evals_path = domain_path / "evals"

@@ -3,6 +3,7 @@ commands/run_cmd.py — cmd_run subcommand (tournament runner).
 """
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from rich.table import Table
 
 from commands.shared import (
     ENGINE_ROOT,
+    get_ai_backend,
     console,
     load_env,
     call_director,
@@ -29,6 +31,9 @@ def cmd_run(args):
         print(f"Domain folder not found: {domain_path}")
         sys.exit(1)
 
+    if getattr(args, "manual_ai", False):
+        os.environ["AUTOFORGE_AI_BACKEND"] = "manual"
+
     # Load .env: domain folder first, then engine root as fallback
     load_env(domain_path)
 
@@ -45,9 +50,12 @@ def cmd_run(args):
     use_brain  = args.brain
     auto_mode  = getattr(args, "auto", False)
     brain_label = "Stage 2 — AI archetypes" if use_brain else ("auto" if auto_mode else "Stage 1 — procedural")
+    backend_label = get_ai_backend()
 
     print(f"\n{'='*60}")
     print(f"Autoforge — {args.domain}  [{brain_label}]")
+    if use_brain or auto_mode:
+        print(f"AI backend: {backend_label}")
     print(f"{args.years} year(s) x {args.batches} batches x {args.rounds} rounds = {args.years * args.batches * args.rounds} total")
     print(f"{'='*60}\n")
 

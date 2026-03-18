@@ -6,6 +6,7 @@ for fine-tuning a local model. The local model learns:
   given scenario + playbook context -> propose strategy parameters
 
 Output format: messages JSONL (compatible with OpenAI fine-tuning + MLX-LM)
+Also exports pairwise preferences when contender data exists.
 For numerical domains: also exports training_features.csv (XGBoost/sklearn)
 
 Usage (via run.py):
@@ -17,9 +18,11 @@ import csv
 import statistics
 from pathlib import Path
 
+from commands.shared import load_mission, normalize_confidence
+
 
 # Keys that are never the score field — used for backward-compat detection
-_NON_SCORE_KEYS = {"round", "winner", "state", "archetype", "metric"}
+_NON_SCORE_KEYS = {"round", "winner", "state", "archetype", "metric", "score_margin", "contenders"}
 
 
 def _detect_score(entry: dict) -> float:
@@ -53,11 +56,16 @@ def _format_playbook_context(playbook: list) -> str:
         return "(no principles yet)"
     lines = []
     for p in playbook:
-        conf = p.get("confidence", 0)
+        conf = normalize_confidence(p.get("confidence", 0))
         ctx  = p.get("context", "")
         text = p.get("principle", "")
         lines.append(f"- [{conf:.0%}] [{ctx}] {text}")
     return "\n".join(lines)
+
+
+def _format_strategy(strategy: dict) -> str:
+    """Format a strategy dict as stable JSON."""
+    return json.dumps(strategy, sort_keys=True)
 
 
 def _detect_domain_type(domain_path: Path) -> str:
@@ -150,11 +158,13 @@ def export_training_data(domain_path: Path):
     if pb_path.exists():
         playbook = [json.loads(l) for l in pb_path.read_text().splitlines() if l.strip()]
     playbook_context = _format_playbook_context(playbook)
+    mission_text = load_mission(domain_path)
 
-    system_content = (
-        f"You are a strategy expert for this domain.\n\n"
-        f"Playbook principles:\n{playbook_context}"
-    )
+    system_parts = ["You are a strategy expert for this domain."]
+    if mission_text:
+        system_parts.append(f"Mission:\n{mission_text}")
+    system_parts.append(f"Playbook principles:\n{playbook_context}")
+    system_content = "\n\n".join(system_parts)
 
     # Write messages JSONL (always written for both domain types)
     written = 0
@@ -175,6 +185,42 @@ def export_training_data(domain_path: Path):
             }
             f.write(json.dumps(example) + "\n")
             written += 1
+
+    # Write pairwise preferences when top contenders are available
+    pref_path = domain_path / "training_preferences.jsonl"
+    pref_written = 0
+    with open(pref_path, "w") as f:
+        for score, entry in kept:
+            state      = entry.get("state", {})
+            winner     = entry.get("winner", {})
+            contenders = entry.get("contenders", [])
+            if not state or not winner or len(contenders) < 2:
+                continue
+
+            prompt = (
+                f"{system_content}\n\n"
+                f"Scenario:\n{_format_scenario(state)}\n\n"
+                "Choose the stronger strategy for this scenario."
+            )
+            winner_text = _format_strategy(winner)
+            for contender in contenders[1:]:
+                loser = contender.get("strategy", {})
+                if not loser:
+                    continue
+                preference = {
+                    "prompt": prompt,
+                    "chosen": winner_text,
+                    "rejected": _format_strategy(loser),
+                    "metadata": {
+                        "winner_name": entry.get("archetype", ""),
+                        "rejected_name": contender.get("name", ""),
+                        "winner_score": score,
+                        "rejected_score": contender.get("score"),
+                        "score_margin": round(score - float(contender.get("score", 0.0)), 4),
+                    },
+                }
+                f.write(json.dumps(preference) + "\n")
+                pref_written += 1
 
     if domain_type == "numerical":
         # Build CSV: state keys + winner keys + score + score_margin + uncertain columns
@@ -232,6 +278,8 @@ def export_training_data(domain_path: Path):
         print(f"\nDomain type: numerical")
         print(f"  training_features.csv  — {csv_rows} rows, {n_cols} columns")
         print(f"  training_data.jsonl    — {written} examples (MLX-LM fine-tuning)")
+        if pref_written:
+            print(f"  training_preferences.jsonl — {pref_written} pairwise preferences")
         print(f"""
 This is a reward model dataset: features = state + strategy, label = score.
 Inference pattern: generate N candidate strategies, score each with XGBoost, pick the best.
@@ -250,6 +298,13 @@ Inference pattern: generate N candidate strategies, score each with XGBoost, pic
       return candidates[int(np.argmax(scores))]""")
 
         if has_margins and p25_margin is not None:
+            threshold_path = domain_path / "abstain_threshold.json"
+            threshold_payload = {
+                "strategy": "score_margin_p25",
+                "threshold": round(p25_margin, 6),
+                "note": "Escalate when the top candidate's predicted edge is smaller than this threshold.",
+            }
+            threshold_path.write_text(json.dumps(threshold_payload, indent=2) + "\n")
             print(f"""
 Abstention pattern (recommended):
   # At inference time, if the top candidate's predicted score advantage is small,
@@ -260,9 +315,12 @@ Abstention pattern (recommended):
       print("ABSTAIN: strategies are too close — escalate to human")
   else:
       best = candidates[int(np.argmax(scores))]""")
+            print(f"  abstain_threshold.json — threshold artifact written")
 
     else:
         domain_name = domain_path.name
         print(f"\nDomain type: language (free-form string params detected)")
         print(f"  training_data.jsonl — {written} examples")
+        if pref_written:
+            print(f"  training_preferences.jsonl — {pref_written} pairwise preferences")
         print(f"  Fine-tune: mlx_lm.lora --model mlx-community/Qwen2.5-1.5B-Instruct-4bit --data {domain_name}/ --train")

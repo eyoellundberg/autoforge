@@ -13,7 +13,14 @@ import os
 from collections import defaultdict
 from pathlib import Path
 
-from commands.shared import load_env
+from commands.shared import (
+    ai_backend_available,
+    load_env,
+    load_mission,
+    normalize_confidence,
+    normalize_playbook_entry,
+    structured_ai_call,
+)
 
 MODEL_EXTRACT = os.environ.get("AUTOFORGE_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
 
@@ -54,18 +61,12 @@ def _merge(new_principles: list, existing: list) -> list:
     Key: topic — same topic updates rather than duplicates.
     Max 2 per topic, max 60 total. Higher confidence wins on collision.
     """
-    def _normalize_conf(p: dict) -> dict:
-        conf = p.get("confidence", 0)
-        if conf > 1.0:
-            p = {**p, "confidence": conf / 100.0}
-        return p
-
     by_topic: dict = defaultdict(list)
     for p in existing:
-        p = _normalize_conf(p)
+        p = normalize_playbook_entry(p)
         by_topic[p.get("topic", p["principle"][:30])].append(p)
     for p in new_principles:
-        p = _normalize_conf(p)
+        p = normalize_playbook_entry(p)
         by_topic[p["topic"]].append(p)
 
     kept = []
@@ -112,11 +113,14 @@ def extract_principles_ai(
     if not extract_prompt_path.exists():
         return existing
 
+    mission_text = load_mission(domain_path)
     system_prompt = extract_prompt_path.read_text().strip()
     system_prompt = system_prompt.replace(
         "{{RETIRED_TOPICS}}",
         json.dumps(retired) if retired else "(none yet)"
     )
+    if mission_text:
+        system_prompt = "MISSION:\n" + mission_text + "\n\n" + system_prompt
 
     def compact(strategy: dict) -> str:
         return json.dumps(strategy, separators=(",", ":"))
@@ -129,7 +133,7 @@ def extract_principles_ai(
     context_lines = "\n".join(f"  {k}: {v}" for k, v in context.items())
 
     playbook_summary = "\n".join(
-        f"  [{e.get('topic')}] {e.get('principle', '')[:70]}  (conf {e.get('confidence', 0):.0%})"
+        f"  [{e.get('topic')}] {e.get('principle', '')[:70]}  (conf {normalize_confidence(e.get('confidence', 0)):.0%})"
         for e in existing
     ) or "  (empty)"
 
@@ -147,27 +151,22 @@ EXISTING PLAYBOOK:
 {playbook_summary}
 """
 
-    # Skip silently if no API key or anthropic not installed
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    # Skip silently if no AI backend is available
+    if not ai_backend_available():
         return existing
 
     for attempt in range(2):
         try:
-            import anthropic
-            client = anthropic.Anthropic()
-            response = client.messages.create(
+            data = structured_ai_call(
+                task_name="extract",
+                domain_path=domain_path,
                 model=MODEL_EXTRACT,
                 max_tokens=512,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_content}],
-                output_config={
-                    "format": {
-                        "type": "json_schema",
-                        "schema": EXTRACT_SCHEMA,
-                    }
-                },
+                system_prompt=system_prompt,
+                user_prompt=user_content,
+                schema=EXTRACT_SCHEMA,
+                metadata={"generation": generation, "score": score},
             )
-            data = json.loads(response.content[0].text)
             new_principles = data.get("principles", [])
 
             new_principles = [p for p in new_principles if p["topic"] not in retired]

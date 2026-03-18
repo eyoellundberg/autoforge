@@ -20,7 +20,10 @@ import importlib
 import json
 import os
 import sys
+from collections import defaultdict
 from pathlib import Path
+
+from commands.shared import normalize_playbook_entry
 
 ENGINE_ROOT = Path(__file__).parent
 
@@ -55,13 +58,98 @@ def _load_playbook(domain_path: Path) -> list:
     p = domain_path / "playbook.jsonl"
     if not p.exists():
         return []
-    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+    return [normalize_playbook_entry(json.loads(line)) for line in p.read_text().splitlines() if line.strip()]
 
 
 def _save_playbook(domain_path: Path, playbook: list):
     with open(domain_path / "playbook.jsonl", "w") as f:
         for entry in playbook:
             f.write(json.dumps(entry) + "\n")
+
+
+def _context_tags(context: dict) -> list[str]:
+    """
+    Extract coarse categorical tags from a context dict.
+
+    Domains can expose bucketed fields in build_context() to help the engine
+    preserve specialists instead of converging only on one safe generalist.
+    """
+    tags = []
+    for key, value in context.items():
+        if isinstance(value, bool):
+            tags.append(f"{key}:{value}")
+        elif isinstance(value, str) and value.strip():
+            tags.append(f"{key}:{value.strip()}")
+    return tags
+
+
+def _select_top_candidates(
+    candidate_strategies: dict,
+    selection_scores: dict,
+    tag_candidate_wins: dict,
+    tag_totals: dict,
+    limit: int = 4,
+) -> list:
+    """
+    Preserve both overall winners and categorical specialists.
+
+    This helps Stage 1 keep breakout experts, pullback experts, risk-off
+    experts, etc., instead of only the safest average performer.
+    """
+    selected = []
+    selected_names = set()
+
+    def add_candidate(name: str, score: int, *, specialist_for: str | None = None, support: int | None = None):
+        if name in selected_names or name not in candidate_strategies:
+            return
+        row = {
+            "name": name,
+            "strategy": candidate_strategies[name],
+            "wins": score,
+        }
+        if specialist_for:
+            row["specialist_for"] = specialist_for
+        if support is not None:
+            row["support"] = support
+        selected.append(row)
+        selected_names.add(name)
+
+    overall_sorted = sorted(selection_scores.items(), key=lambda item: item[1], reverse=True)
+    for name, score in overall_sorted[:2]:
+        add_candidate(name, score)
+
+    tag_rank = sorted(tag_totals.items(), key=lambda item: (-item[1], item[0]))
+    for tag, total in tag_rank:
+        if len(selected) >= limit:
+            break
+        if total < 3:
+            continue
+        wins_by_name = tag_candidate_wins.get(tag, {})
+        if not wins_by_name:
+            continue
+        specialist_name, specialist_support = max(
+            wins_by_name.items(),
+            key=lambda item: (item[1], selection_scores.get(item[0], 0)),
+        )
+        if specialist_name in selected_names:
+            continue
+        if specialist_support < 2:
+            continue
+        if specialist_support / total < 0.35:
+            continue
+        add_candidate(
+            specialist_name,
+            selection_scores.get(specialist_name, specialist_support),
+            specialist_for=tag,
+            support=specialist_support,
+        )
+
+    for name, score in overall_sorted:
+        if len(selected) >= limit:
+            break
+        add_candidate(name, score)
+
+    return selected[:limit]
 
 
 # ── Stage 1: evolutionary candidate generation ────────────────────────────────
@@ -216,6 +304,8 @@ def run_batch(
     archetype_wins_event     = {}
     archetype_wins_nonevent  = {}
     context_mix              = {}
+    tag_candidate_wins       = defaultdict(lambda: defaultdict(int))
+    tag_totals               = defaultdict(int)
 
     states   = [_SIM.random_state() for _ in range(n_rounds)]
     contexts = [build_context(s)    for s in states]
@@ -253,6 +343,14 @@ def run_batch(
                 "winner":       winner,
                 "state":        state,
                 "archetype":    winner_name,
+                "contenders": [
+                    {
+                        "name": name,
+                        "score": round(score, 4),
+                        "strategy": candidate,
+                    }
+                    for score, candidate, name in scored
+                ],
             }
             log_file.write(json.dumps(entry) + "\n")
 
@@ -271,6 +369,10 @@ def run_batch(
             for k, v in context.items():
                 key = f"{k}:{v}"
                 context_mix[key] = context_mix.get(key, 0) + 1
+
+            for tag in _context_tags(context):
+                tag_totals[tag] += 1
+                tag_candidate_wins[tag][winner_name] += 1
 
             # Extract principles every 10 rounds
             if round_num % 10 == 0:
@@ -301,36 +403,32 @@ def run_batch(
 
     # ── Save top candidates for Stage 1 evolution ────────────────────────────
     if archetypes:
-        top_n = sorted(
-            [
-                (
-                    archetype_wins_nonevent.get(a["name"], 0) * 2
-                    + archetype_wins_event.get(a["name"], 0),
-                    a["strategy"],
-                    a["name"],
-                )
-                for a in archetypes
-            ],
-            key=lambda x: x[0],
-            reverse=True,
-        )[:4]
-        top_candidates = [{"name": n, "strategy": c, "wins": w} for w, c, n in top_n]
+        selection_scores = {
+            a["name"]: archetype_wins_nonevent.get(a["name"], 0) * 2
+            + archetype_wins_event.get(a["name"], 0)
+            for a in archetypes
+        }
+        top_candidates = _select_top_candidates(
+            candidate_strategies={a["name"]: a["strategy"] for a in archetypes},
+            selection_scores=selection_scores,
+            tag_candidate_wins=tag_candidate_wins,
+            tag_totals=tag_totals,
+            limit=4,
+        )
         (domain_path / "top_candidates.json").write_text(json.dumps(top_candidates, indent=2))
     elif stage1_candidates:
-        top_n = sorted(
-            [
-                (
-                    archetype_wins_nonevent.get(stage1_names[j], 0)
-                    + archetype_wins.get(stage1_names[j], 0),
-                    stage1_candidates[j],
-                    stage1_names[j],
-                )
-                for j in range(len(stage1_candidates))
-            ],
-            key=lambda x: x[0],
-            reverse=True,
-        )[:4]
-        top_candidates = [{"name": n, "strategy": c, "wins": w} for w, c, n in top_n]
+        selection_scores = {
+            stage1_names[j]: archetype_wins_nonevent.get(stage1_names[j], 0)
+            + archetype_wins.get(stage1_names[j], 0)
+            for j in range(len(stage1_candidates))
+        }
+        top_candidates = _select_top_candidates(
+            candidate_strategies={stage1_names[j]: stage1_candidates[j] for j in range(len(stage1_candidates))},
+            selection_scores=selection_scores,
+            tag_candidate_wins=tag_candidate_wins,
+            tag_totals=tag_totals,
+            limit=4,
+        )
         (domain_path / "top_candidates.json").write_text(json.dumps(top_candidates, indent=2))
 
     # ── Build result dict for director ────────────────────────────────────────

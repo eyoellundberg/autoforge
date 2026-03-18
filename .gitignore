@@ -16,6 +16,9 @@ __pycache__/
 .env
 */.env
 
+# Domains — live outside the engine repo
+StockTiming/
+
 # Run artifacts — do not commit
 */tournament_log.jsonl
 */thinking_log.md

@@ -5,6 +5,7 @@ commands/shared.py — Shared constants, helpers, and AI-call utilities.
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,168 @@ def load_env(domain_path: Path):
                 if line.strip() and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
                     os.environ.setdefault(k.strip(), v.strip())
+
+
+def load_mission(domain_path: Path) -> str:
+    """Return mission.md contents for a domain, if present."""
+    mission_path = domain_path / "mission.md"
+    if not mission_path.exists():
+        return ""
+    return mission_path.read_text().strip()
+
+
+def normalize_confidence(value) -> float:
+    """Normalize legacy confidence values like 73 into 0.73."""
+    try:
+        conf = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if conf > 1.0:
+        conf /= 100.0
+    return max(0.0, min(1.0, conf))
+
+
+def normalize_playbook_entry(entry: dict) -> dict:
+    """Return a playbook entry with normalized confidence."""
+    return {**entry, "confidence": normalize_confidence(entry.get("confidence", 0))}
+
+
+def get_ai_backend() -> str:
+    """Return the configured AI backend."""
+    return os.environ.get("AUTOFORGE_AI_BACKEND", "anthropic").strip().lower() or "anthropic"
+
+
+def _valid_anthropic_key() -> bool:
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        return False
+    if "..." in key:
+        return False
+    if key.lower().startswith("your_"):
+        return False
+    return True
+
+
+def ai_backend_available() -> bool:
+    """Whether an AI backend is available for structured calls."""
+    backend = get_ai_backend()
+    if backend == "manual":
+        return True
+    if backend != "anthropic":
+        return False
+    if not _valid_anthropic_key():
+        return False
+    try:
+        import anthropic  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def _validate_top_level_required(data: dict, schema: dict, task_name: str):
+    """Lightweight validation for manual responses."""
+    required = schema.get("required", [])
+    missing = [key for key in required if key not in data]
+    if missing:
+        raise ValueError(f"Manual {task_name} response missing required keys: {missing}")
+
+
+def _manual_ai_roundtrip(
+    *,
+    task_name: str,
+    domain_path: Path,
+    system_prompt: str,
+    user_prompt: str,
+    schema: dict,
+    metadata: dict | None = None,
+) -> dict:
+    """Write a manual AI request file and wait for a response file."""
+    manual_dir = domain_path / "manual_ai"
+    requests_dir = manual_dir / "requests"
+    responses_dir = manual_dir / "responses"
+    requests_dir.mkdir(parents=True, exist_ok=True)
+    responses_dir.mkdir(parents=True, exist_ok=True)
+
+    request_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-{task_name}"
+    request_path = requests_dir / f"{request_id}.json"
+    response_path = responses_dir / f"{request_id}.json"
+
+    payload = {
+        "task": task_name,
+        "request_id": request_id,
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "schema": schema,
+        "response_path": str(response_path),
+        "metadata": metadata or {},
+    }
+    request_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+    console.print(
+        f"[cyan]manual-ai[/cyan] Waiting for `{task_name}` response:\n"
+        f"  request: {request_path}\n"
+        f"  reply to: {response_path}"
+    )
+
+    timeout_s = int(os.environ.get("AUTOFORGE_MANUAL_TIMEOUT_SECONDS", "1800"))
+    poll_s = float(os.environ.get("AUTOFORGE_MANUAL_POLL_SECONDS", "1.0"))
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if response_path.exists():
+            data = json.loads(response_path.read_text())
+            if isinstance(data, dict) and "response" in data and isinstance(data["response"], dict):
+                data = data["response"]
+            if not isinstance(data, dict):
+                raise ValueError(f"Manual {task_name} response must be a JSON object")
+            _validate_top_level_required(data, schema, task_name)
+            return data
+        time.sleep(poll_s)
+
+    raise TimeoutError(f"Timed out waiting for manual {task_name} response at {response_path}")
+
+
+def structured_ai_call(
+    *,
+    task_name: str,
+    domain_path: Path,
+    model: str,
+    max_tokens: int,
+    system_prompt: str,
+    user_prompt: str,
+    schema: dict,
+    metadata: dict | None = None,
+) -> dict:
+    """Run a structured AI call via the configured backend."""
+    backend = get_ai_backend()
+    if backend == "manual":
+        return _manual_ai_roundtrip(
+            task_name=task_name,
+            domain_path=domain_path,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            schema=schema,
+            metadata=metadata,
+        )
+
+    if backend != "anthropic":
+        raise RuntimeError(f"Unsupported AI backend: {backend}")
+
+    import anthropic
+
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+        output_config={
+            "format": {
+                "type": "json_schema",
+                "schema": schema,
+            }
+        },
+    )
+    return json.loads(response.content[0].text)
 
 
 MODEL_DIRECTOR = os.environ.get("AUTOFORGE_DIRECTOR_MODEL", "claude-sonnet-4-6")
@@ -104,12 +267,15 @@ def call_director(
 
     director_md = domain_path / "prompts" / "director.md"
     domain_context = director_md.read_text().strip() if director_md.exists() else ""
+    mission_text = load_mission(domain_path)
 
     system_prompt = (
         "You are an expert analyst directing an autonomous learning engine. "
         "Be specific and actionable. Identify real learning vs sim artifacts. "
         "Keep observations concise — 2-4 items each."
     )
+    if mission_text:
+        system_prompt = "MISSION:\n" + mission_text + "\n\n" + system_prompt
     if domain_context:
         system_prompt = domain_context + "\n\n" + system_prompt
 
@@ -121,7 +287,7 @@ def call_director(
         overall_trend = f"{delta:+.2f} from batch 1 to batch {batch_num}"
 
     top_principles = "\n".join(
-        f"  [{p.get('confidence', 0):.0%}] [{p.get('context', '')}] {p.get('principle', '')}"
+        f"  [{normalize_confidence(p.get('confidence', 0)):.0%}] [{p.get('context', '')}] {p.get('principle', '')}"
         for p in result["top_principles"]
     ) or "  none yet"
 
@@ -212,28 +378,26 @@ Examples of good suggestions:
 Leave empty [] for converging / exploring / stalled / saturated.
 """
 
-    import anthropic
-    client = anthropic.Anthropic()
-    response = client.messages.create(
+    return structured_ai_call(
+        task_name="director",
+        domain_path=domain_path,
         model=MODEL_DIRECTOR,
         max_tokens=2048,
-        system=system_prompt,
-        messages=[{"role": "user", "content": prompt}],
-        output_config={
-            "format": {
-                "type": "json_schema",
-                "schema": DIRECTOR_SCHEMA,
-            }
-        },
+        system_prompt=system_prompt,
+        user_prompt=prompt,
+        schema=DIRECTOR_SCHEMA,
+        metadata={"batch_num": batch_num, "playbook_size": result["playbook_size"]},
     )
-
-    return json.loads(response.content[0].text)
 
 
 # ── Thinking log ─────────────────────────────────────────────────────────────
 
 def append_thinking_log(log_path: Path, batch_num: int, result: dict, analysis: dict):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    simulation_fix_section = ""
+    if analysis.get("simulation_fix_suggestions"):
+        fixes = chr(10).join(f"- {s}" for s in analysis["simulation_fix_suggestions"])
+        simulation_fix_section = f"\n**Simulation fix suggestions:**\n{fixes}\n"
 
     section = f"""
 ## Batch {batch_num} — {timestamp}  |  {result['n_rounds']} rounds  |  avg score {result['avg_score']}  |  trend {result['trend_pct']:+.1f}%
@@ -256,8 +420,7 @@ def append_thinking_log(log_path: Path, batch_num: int, result: dict, analysis: 
 
 **Hints injected for next batch:**
 {chr(10).join(f"- {h}" for h in analysis['hints']) or "- none"}
-
-{("**Simulation fix suggestions:**\n" + chr(10).join(f"- {s}" for s in analysis.get('simulation_fix_suggestions', []))) if analysis.get('simulation_fix_suggestions') else ""}
+{simulation_fix_section}
 
 ---"""
 
@@ -339,7 +502,7 @@ def retire_principles(analysis: dict, domain_path: Path):
     if not pb_path.exists():
         return
 
-    entries = [json.loads(l) for l in pb_path.read_text().strip().splitlines() if l.strip()]
+    entries = [normalize_playbook_entry(json.loads(l)) for l in pb_path.read_text().strip().splitlines() if l.strip()]
     protected = {e.get("topic") for e in entries if e.get("confidence", 0) >= 0.88}
     safe_to_retire = [t for t in to_retire if t not in protected][:2]
 
