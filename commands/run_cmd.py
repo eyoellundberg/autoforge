@@ -59,18 +59,37 @@ def cmd_run(args):
     print(f"{args.years} year(s) x {args.batches} batches x {args.rounds} rounds = {args.years * args.batches * args.rounds} total")
     print(f"{'='*60}\n")
 
-    generation_offset = 0
-    year_avg_scores   = []
-    prior_analysis    = None
-    playbook_sizes    = []
-    stop_reason       = None
-    all_batch_rows    = []  # for Rich summary table
-
-    # Auto-mode saturation tracking: count consecutive batches with no playbook growth
+    generation_offset     = 0
+    year_avg_scores       = []
+    prior_analysis        = None
+    playbook_sizes        = []
+    stop_reason           = None
+    all_batch_rows        = []
     auto_consecutive_flat = 0
+    hints                 = []
+    start_year            = 1
+    start_batch           = 1
 
-    for year_num in range(1, args.years + 1):
-        hints       = []
+    checkpoint_path = domain_path / "run_checkpoint.json"
+    if checkpoint_path.exists():
+        try:
+            ckpt = json.loads(checkpoint_path.read_text())
+            if ckpt.get("domain") == args.domain:
+                generation_offset     = ckpt["generation_offset"]
+                playbook_sizes        = ckpt["playbook_sizes"]
+                prior_analysis        = ckpt.get("prior_analysis")
+                auto_consecutive_flat = ckpt.get("auto_consecutive_flat", 0)
+                use_brain             = ckpt.get("use_brain", use_brain)
+                hints                 = ckpt.get("hints", [])
+                all_batch_rows        = ckpt.get("all_batch_rows", [])
+                year_avg_scores       = ckpt.get("year_avg_scores", [])
+                start_year            = ckpt["year_num"]
+                start_batch           = ckpt["batch_num"] + 1
+                print(f"Resuming from batch {ckpt['global_batch']} (delete run_checkpoint.json to start fresh)\n")
+        except Exception:
+            pass
+
+    for year_num in range(start_year, args.years + 1):
         all_results = []
 
         if args.years > 1:
@@ -80,7 +99,7 @@ def cmd_run(args):
             with open(thinking_log, "a") as f:
                 f.write(f"\n# -- Year {year_num} -- {datetime.now().strftime('%Y-%m-%d %H:%M')} --\n\n")
 
-        for batch_num in range(1, args.batches + 1):
+        for batch_num in range(start_batch if year_num == start_year else 1, args.batches + 1):
             global_batch = (year_num - 1) * args.batches + batch_num
 
             # Auto-mode: promote to Stage 2 if playbook flatlined for 2 consecutive batches
@@ -178,6 +197,22 @@ def cmd_run(args):
             retire_principles(analysis, domain_path)
             git_commit_batch(args.domain, domain_path, global_batch, result, analysis)
 
+            checkpoint_path.write_text(json.dumps({
+                "domain":               args.domain,
+                "generation_offset":    generation_offset,
+                "global_batch":         global_batch,
+                "batch_num":            batch_num,
+                "year_num":             year_num,
+                "use_brain":            use_brain,
+                "hints":                hints,
+                "prior_analysis":       prior_analysis,
+                "playbook_sizes":       playbook_sizes,
+                "auto_consecutive_flat": auto_consecutive_flat,
+                "all_batch_rows":       all_batch_rows,
+                "year_avg_scores":      year_avg_scores,
+                "timestamp":            datetime.now().isoformat(),
+            }, indent=2))
+
             if verdict == "reward_hacking":
                 print("! Reward hacking flagged — stopping run.")
                 fixes = analysis.get("simulation_fix_suggestions", [])
@@ -204,6 +239,10 @@ def cmd_run(args):
 
         if stop_reason in ("reward_hacking", "saturated"):
             break
+
+    # Clean up checkpoint on normal completion
+    if checkpoint_path.exists() and stop_reason not in ("reward_hacking",):
+        checkpoint_path.unlink()
 
     # Write last_run.json
     final_verdict = prior_analysis["verdict"] if prior_analysis else "unknown"

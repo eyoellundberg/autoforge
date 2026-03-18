@@ -296,7 +296,53 @@ def cmd_validate(args):
     except Exception:
         pass
 
-    # 8. Check prompts exist
+    # 8. Multi-candidate dominance check — one candidate shouldn't always win
+    try:
+        import collections as _col
+        _candidates = []
+        for _ in range(4):
+            c = {}
+            for key, spec in schema.get("properties", {}).items():
+                t = spec.get("type")
+                if t == "number":
+                    c[key] = _random.uniform(spec.get("minimum", 0.0), spec.get("maximum", 1.0))
+                elif t == "integer":
+                    c[key] = _random.randint(spec.get("minimum", 0), spec.get("maximum", 10))
+                elif "enum" in spec:
+                    c[key] = _random.choice(spec["enum"])
+                else:
+                    c[key] = None
+            _candidates.append(c)
+        win_counts = _col.Counter()
+        for _ in range(50):
+            state = sim.random_state()
+            winner_idx = max(range(len(_candidates)), key=lambda j: sim.simulate(_candidates[j], state))
+            win_counts[winner_idx] += 1
+        top_pct = max(win_counts.values()) / 50
+        if top_pct > 0.8:
+            warnings.append(f"One random candidate wins {top_pct:.0%} of 50 rounds — possible dominant strategy, check simulation.py")
+        else:
+            ok.append(f"No single candidate dominates (top win rate {top_pct:.0%} across 4 candidates)")
+    except Exception:
+        pass
+
+    # 9. build_context check — if present, verify it returns categorically diverse results
+    if hasattr(sim, "build_context"):
+        try:
+            ctxs = [sim.build_context(sim.random_state()) for _ in range(30)]
+            if ctxs and isinstance(ctxs[0], dict):
+                categorical_keys = [k for k, v in ctxs[0].items() if isinstance(v, str)]
+                diverse = sum(1 for k in categorical_keys if len(set(c.get(k) for c in ctxs)) >= 2)
+                if categorical_keys and diverse == 0:
+                    warnings.append("build_context() returns same categorical values every time — specialist preservation won't work effectively")
+                else:
+                    ok.append(f"build_context() present, {len(ctxs[0])} key(s), categorically diverse")
+            else:
+                warnings.append("build_context() returned non-dict — expected dict")
+        except Exception as e:
+            warnings.append(f"build_context() raised: {e}")
+
+    # 10. Check prompts exist
     for fname in ["brain.md", "extract.md", "director.md"]:
         p = domain_path / "prompts" / fname
         if p.exists():
@@ -632,6 +678,8 @@ def cmd_eval(args):
     console.print(f"\n[{color}]{passed}/{len(scenarios)} passed ({pct:.0f}%)[/{color}]")
     if pct < 80:
         console.print("[dim]Run more batches to improve — then re-eval.[/dim]")
+    if passed < len(scenarios):
+        sys.exit(1)
 
 
 def cmd_import(args):
