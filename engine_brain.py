@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 
 
-MODEL_LIBRARY = os.environ.get("ENGINE_LIBRARY_MODEL", "claude-sonnet-4-6")
+MODEL_LIBRARY = os.environ.get("AUTOFORGE_LIBRARY_MODEL", "claude-sonnet-4-6")
 
 
 def _load_env(domain_path: Path):

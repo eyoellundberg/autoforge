@@ -1,46 +1,38 @@
 # Autoforge
 
-An autonomous strategy learning system. Describe a domain, run overnight, wake up to a trained local model that makes expert decisions for free.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Claude](https://img.shields.io/badge/powered%20by-Claude-orange.svg)](https://anthropic.com)
+
+**Autonomous strategy learning via simulation tournament.** Describe a decision domain, run overnight, wake up to a trained local model that makes expert decisions for free — forever.
 
 ---
 
 ## Why Autoforge?
 
-Most decisions in any domain follow patterns that can be learned — but the training data doesn't exist yet. Autoforge creates it. You describe the decision problem, it simulates thousands of scenarios, discovers what consistently wins, and distills that into a model that runs locally for free forever. No labelled dataset required. No ongoing API bill. The simulation is the teacher.
+Most decisions follow patterns that can be learned — but the training data doesn't exist yet. Autoforge creates it.
+
+You describe the problem. It simulates thousands of scenarios, runs competing strategies against them, extracts what consistently wins, and distills that into a local model that costs nothing to run. No labelled dataset required. No ongoing API bill. **The simulation is the teacher.**
 
 ---
 
-## Installation
+## How It Works
 
-```bash
-git clone https://github.com/eyoellundberg/autoforge
-cd autoforge
-pip install -e .   # installs anthropic + rich, adds 'autoforge' CLI alias
+Three stages, each building on the last:
+
+**Stage 1 — Evolutionary mutation (free)**
+Generates 16 candidate strategies per batch. Each batch evolves from the last: top winners kept, mutated with gaussian noise, crossed over, random fill for exploration. No API calls. Runs as fast as your CPU.
+
+**Stage 2 — Frontier AI direction (~$0.50/run)**
+Sonnet reads the warm playbook and generates 16 named strategy archetypes — each with a philosophy, not just parameters. The sim tests all 16 across hundreds of scenarios. Haiku extracts conditional principles every 10 rounds. The director reads results between batches, retires losers, sharpens the next library. By batch 5, Sonnet is refining its own prior designs based on what the sim proved.
+
+**Stage 3 — Local model (free forever)**
+Export the tournament log as training data. For numerical domains: train XGBoost — tiny, fast, explainable, microsecond inference. For language domains: fine-tune Qwen 1.5B via MLX-LM on Apple Silicon. No more API calls. Ever.
+
 ```
-
-Or without installing:
-```bash
-pip install anthropic rich
-python run.py <command>
+Description → bootstrap → Stage 1 → Stage 2 → saturated → export → local model
+    ~$0.05        free      ~$0.50     free        forever
 ```
-
-Set your API key (only needed for Stage 2):
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-# or add to MyDomain/.env — Autoforge reads it automatically
-```
-
----
-
-## The Core Idea
-
-**The simulation is the teacher, not the AI.** You build a deterministic scoring function for your domain. Autoforge runs thousands of strategy candidates against it. What consistently wins becomes the playbook.
-
-**Frontier models (Sonnet/Haiku) design the strategy space and extract conditional principles.** They generate the best possible training signal — named archetypes with philosophy, conditional rules from what won. They are never used at inference time.
-
-**A local model is trained on what the simulation proved.** XGBoost for numerical domains (grain pricing, demand scoring, rates). A fine-tuned small LLM for language domains (classification, routing, document scoring). Either way: runs locally, zero API cost, forever.
-
-**Inspired by Karpathy's autoresearch — but generalized.** autoresearch autonomously improves a language model training loop. Autoforge autonomously learns any structured decision domain.
 
 ---
 
@@ -48,9 +40,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 If both are true, Autoforge can learn it:
 
-1. **Can the job be described in a markdown file?** If someone can write what the job is, what good output looks like, and what the inputs are — Autoforge can learn it.
-
-2. **Is the output structured?** Pricing decisions, scoring, triage, routing, forecasting — any job that is: read inputs → produce structured output.
+1. **Can the job be described in a markdown file?** If someone can write what good output looks like and what the inputs are — Autoforge can learn it.
+2. **Is the output structured?** Pricing, scoring, triage, routing, forecasting, game AI — any job that maps inputs to a structured decision.
 
 ---
 
@@ -58,94 +49,60 @@ If both are true, Autoforge can learn it:
 
 ```bash
 git clone https://github.com/eyoellundberg/autoforge
-cd engine
-pip install anthropic rich
+cd autoforge
+pip install -e .
+```
 
-# Generate a domain from a description (Sonnet writes simulation.py + prompts)
+```bash
+# 1. Generate a domain from a plain English description
 python run.py bootstrap GrainMarketing \
   --description "corn/soy marketing for midwest US farms, optimizing \
   timing of cash grain sales against local elevator basis"
 
-# Review GrainMarketing/simulation.py — calibrate until the right strategy wins
-# in each scenario type. This is the only manual step.
+# 2. Review GrainMarketing/simulation.py — the only manual step
+#    Calibrate until the right strategy wins in each scenario type
 
-# Check scenario distributions, score range, and dominance issues
+# 3. Check distributions and catch issues before a long run
 python run.py calibrate --domain GrainMarketing
 
-# Validate domain before running (catches bad simulation.py early)
-python run.py validate --domain MyDomain
-
-# Stage 1 — free, evolutionary, no API calls
+# 4. Stage 1 — free, no API key needed
 python run.py run --domain GrainMarketing --batches 10 --rounds 150
 
-# Stage 2 — AI archetypes + director (~$0.50/run)
+# 5. Stage 2 — AI archetypes + director
 export ANTHROPIC_API_KEY=sk-ant-...
 python run.py run --domain GrainMarketing --brain --batches 8 --rounds 150
 
-# Fully autonomous: Stage 1 → Stage 2 auto-promotion on saturation
-python run.py run --domain GrainMarketing --auto --batches 20 --rounds 150
+# 6. Fully autonomous overnight run
+python run.py run --domain GrainMarketing --auto --batches 20 --rounds 1000 --workers 8
 
-# Check state anytime
+# 7. Check what it learned
 python run.py status --domain GrainMarketing
 
-# Export Stage 3 training data when saturated
+# 8. Export Stage 3 training data
 python run.py export --domain GrainMarketing
 ```
 
 ---
 
-## The Three Stages
+## Try It Now — StockTiming Example
 
-### Stage 1 — Evolutionary mutation (free)
+A complete working domain is included. No setup needed:
 
-No API calls. `_generate_procedural_candidates()` generates 16 candidates per batch. Each batch evolves from the last: top winners are kept (elitism), mutated (gaussian noise on parameters), crossed over, with random candidates filling the rest for exploration. The playbook grows from Haiku extraction every 10 rounds.
+```bash
+# Stage 1 — free, no API key
+python run.py run --domain StockTiming --batches 5 --rounds 100
 
-After 10 batches the parameter space has narrowed toward what actually works — a warm start for Stage 2.
+# Calibrate first to see scenario distributions
+python run.py calibrate --domain StockTiming
 
-### Stage 2 — Frontier model direction (~$0.50/run)
+# Stage 2 — AI archetypes (needs API key)
+python run.py run --domain StockTiming --brain --batches 5 --rounds 100
 
-Sonnet reads the warm playbook and generates 16 named strategy archetypes with philosophy, not just parameter values. "Drought Patience" — hold 60%+ through July in confirmed drought years. Each archetype is a full strategic position.
-
-The sim tests all 16 across 150 random scenarios per batch. Haiku extracts 0-2 conditional principles every 10 rounds. The director (Sonnet) reads results between batches, retires losers, sharpens the next library. The champion archetype (most non-event wins) propagates to seed the next batch.
-
-By batch 5, Sonnet is refining its own prior designs based on what the sim proved.
-
-### Stage 3 — Local model (free forever)
-
-After saturation, the tournament log contains thousands of labeled examples: (scenario state → winning strategy parameters). `run.py export` formats them as training data.
-
-For numerical domains (grain, pricing, scoring): train XGBoost on the scenario features — tiny, fast, explainable, runs anywhere. For language domains (classification, routing based on text): fine-tune a small LLM (Qwen 1.5b via MLX-LM). The sim can still validate outputs. No more API calls.
-
----
-
-## The Loop (precise)
-
+# Check what it learned
+python run.py status --domain StockTiming
 ```
-bootstrap:
-  Sonnet reads description → writes simulation.py + all prompts
-  (one-time, ~$0.05, then never again)
 
-Stage 1 batch:
-  _generate_evolved_candidates(): elites + mutations + crossovers + random
-  → 16 candidates tested across N rounds (no API call)
-  → every 10 rounds: Haiku extracts 0-2 principles → playbook
-  → batch end: director analyzes, sets hints for next batch
-  → top 4 winners saved for next batch's evolution
-
-Stage 2 batch:
-  Sonnet reads: playbook + director hints + champion archetype
-  → generates 16 named archetypes with philosophy (1 API call)
-  → sim tests all 16 across N rounds (no API call per round)
-  → every 10 rounds: Haiku extracts principles (1 API call per 10 rounds)
-  → batch end: director analyzes (1 API call)
-  → champion propagates to next batch
-
-Saturation:
-  director returns "saturated" → run stops
-  → export training data
-  → train local model
-  → deploy: sim validates, local model decides
-```
+StockTiming optimizes moving average crossover parameters across simulated market regimes (trending, ranging, volatile, event). Minimal but complete — use it to understand the loop before building your own domain.
 
 ---
 
@@ -165,33 +122,33 @@ MyDomain/
     └── director.md    # give the director domain context
 ```
 
-**`simulation.py` is the investment.** Autoforge only learns what the simulation teaches. If it rewards the wrong behavior, the whole system optimizes toward garbage. Calibration checklist:
+**`simulation.py` is the investment.** Autoforge only learns what the simulation teaches. Calibration checklist:
 
 - Does the expected strategy type win in each scenario class?
 - Does varying scenario factors change which strategy wins?
 - Is the score range reasonable?
 - No single strategy dominates regardless of scenario?
 
-Real data is optional: place CSVs in `MyDomain/data/`. Only `simulation.py` reads it. `random_state()` samples from real distributions instead of synthetic ones. Autoforge doesn't change.
+Or skip the blank page — `bootstrap` generates all four files from a description:
+
+```bash
+python run.py bootstrap MyDomain --description "..."
+```
 
 ---
 
 ## Real Data & Calibration
 
-**Three situations:**
+| Situation | What to do |
+|---|---|
+| No data yet | Use synthetic `random_state()` — Autoforge explores the space |
+| Have historical data | Calibrate `random_state()` to draw from real distributions |
+| Already have labels | Skip Autoforge — just train directly |
 
-| | What you have | What to do |
-|---|---|---|
-| No data | Nothing yet | Use synthetic `random_state()` — Autoforge explores the space |
-| Real data | Historical records, CSVs | Calibrate `random_state()` to draw from real distributions |
-| Abundant labels | Clean (input → output) pairs | You don't need Autoforge — just train directly |
-
-The most powerful case is the middle one. Real data captures what happened. The simulation discovers what *should* have happened. Training on simulation output that was calibrated to real distributions gives you optimal decisions — not recorded human ones, which are often late, emotional, or constrained.
-
-**Calibrating `random_state()` with a CSV:**
+The most powerful case is the middle one. Real data captures what *happened*. The simulation discovers what *should have happened*. Training on simulation output calibrated to real distributions gives you optimal decisions — not recorded human ones.
 
 ```python
-# simulation.py
+# simulation.py — load a CSV once, sample from real history
 import csv, random
 from pathlib import Path
 
@@ -200,90 +157,81 @@ _DATA = None
 def _load_data():
     global _DATA
     if _DATA is None:
-        rows = []
         with open(Path(__file__).parent / "data" / "history.csv") as f:
-            for row in csv.DictReader(f):
-                rows.append(row)
-        _DATA = rows
+            _DATA = list(csv.DictReader(f))
     return _DATA
 
 def random_state() -> dict:
     row = random.choice(_load_data())
-    return {
-        "demand":   float(row["demand"]),
-        "basis":    float(row["basis"]),
-        "is_event": row["is_event"] == "True",
-    }
+    return {"demand": float(row["demand"]), "basis": float(row["basis"])}
 ```
 
-The tournament runs identically. The only change is that scenarios now come from your real market history instead of a synthetic distribution.
-
-**Verify calibration before a long run:**
+Verify before a long run:
 
 ```bash
 python run.py calibrate --domain GrainMarketing
+# Shows: scenario distributions, score range, candidate win spread
+# Flags: dominant strategies, zero-heavy scores, low variance
 ```
-
-This samples 500 scenarios, shows distributions for every state key, scores 8 random candidates, and flags problems: dominant strategies, zero-heavy scores, low variance. Fix issues in `simulation.py`, re-run calibrate, then run the tournament.
-
-**The hybrid advantage:** if your historical data shows 200 drought years, 150 normal years, 50 event years — `random_state()` reflects that ratio. Autoforge then generates thousands more scenarios in those proportions and trains on what won. You end up with a model that knows *your* market, not the average market.
 
 ---
 
-## Try It Now — StockTiming Example
-
-A complete working domain is included. No configuration needed:
+## Overnight Runs
 
 ```bash
-# Stage 1 — free, no API key
-python run.py run --domain StockTiming --batches 5 --rounds 100
+# Run unattended — survives terminal close, prevents macOS sleep
+caffeinate -i uv run python run.py run \
+  --domain GrainMarketing \
+  --auto --batches 20 --rounds 1000 --workers 8 \
+  > GrainMarketing/run.log 2>&1 &
 
-# Stage 2 — AI archetypes (needs API key)
-python run.py run --domain StockTiming --brain --batches 5 --rounds 100
-
-# Validate before running
-python run.py validate --domain StockTiming
-
-# Check what it learned
-python run.py status --domain StockTiming
+echo "Running as PID $! — check GrainMarketing/run.log in the morning"
 ```
 
-StockTiming optimizes moving average crossover parameters across simulated market regimes (trending, ranging, volatile, event). It's a minimal but complete example of the Autoforge loop — use it to understand the system before building your own domain.
+```bash
+# Morning check
+tail -50 GrainMarketing/run.log
+python run.py status --domain GrainMarketing
+```
+
+- `caffeinate -i` — prevents macOS idle sleep for the duration
+- `--workers 8` — parallel simulation across CPU cores (leave 2 free for the OS)
+- `--auto` — Stage 1 until playbook plateaus, then promotes to Stage 2 automatically
+- Batch and director failures are caught and logged — a single API timeout won't kill the run
 
 ---
 
 ## Architecture
 
 ```
-engine/
-├── run.py              CLI: bootstrap / new / validate / run / export / status
-├── engine_brain.py     Sonnet archetype library generator
-│                       reads: prompts/brain.md + playbook + champion + hints
-│                       writes: 16 named archetypes with strategy parameters
-├── engine_extract.py   Haiku principle extractor (called every 10 rounds)
-│                       reads: prompts/extract.md + winner/losers/context
-│                       writes: 0-2 conditional principles → playbook
-├── engine_export.py    Stage 3 training data exporter
-│                       reads: tournament_log.jsonl + playbook
-│                       writes: training_data.jsonl (messages format)
-└── template/           copy this to start a new domain
-    ├── simulation.py   skeleton with all required exports + calibration guide
-    ├── tournament.py   skeleton tournament loop with evolution built in
-    └── prompts/        skeleton brain.md / extract.md / director.md
+autoforge/
+├── run.py                  entry point (8 lines)
+├── commands/
+│   ├── cli.py              argparse + dispatch
+│   ├── shared.py           schemas, director AI, git helpers
+│   ├── bootstrap.py        domain generation from description
+│   ├── run_cmd.py          tournament runner
+│   └── tools.py            calibrate, validate, status, export
+├── engine_brain.py         Sonnet archetype library generator
+├── engine_extract.py       Haiku principle extractor (every 10 rounds)
+├── engine_export.py        Stage 3 training data exporter
+└── template/               copy this to start a new domain
+    ├── simulation.py       skeleton with calibration guide
+    ├── tournament.py       tournament loop with evolution built in
+    └── prompts/            brain.md / extract.md / director.md
 
-MyDomain/               your domain (one per problem)
-    ├── simulation.py   scoring function — only file with domain knowledge
-    ├── tournament.py   tournament loop (mostly template, adapt _build_context)
-    ├── prompts/        domain-specific AI instructions
-    ├── data/           optional: real historical/calibration data
-    ├── playbook.jsonl          learned conditional principles (commit this)
-    ├── retired_topics.json     permanent blocklist (commit this)
-    ├── champion_archetype.json best archetype from last batch (commit this)
-    ├── top_candidates.json     top Stage 1 winners for evolution (commit this)
-    ├── thinking_log.md         director reasoning trail (do not commit)
-    ├── tournament_log.jsonl    round-by-round scores (do not commit)
-    ├── training_data.jsonl     Stage 3 export (do not commit)
-    └── last_run.json           last run summary (do not commit)
+MyDomain/
+    ├── simulation.py           scoring function — only file with domain knowledge
+    ├── tournament.py           tournament loop (template + _build_context)
+    ├── prompts/                domain-specific AI instructions
+    ├── data/                   optional: real historical data
+    ├── playbook.jsonl          learned conditional principles  ← commit this
+    ├── retired_topics.json     permanent principle blocklist   ← commit this
+    ├── champion_archetype.json best archetype from last batch  ← commit this
+    ├── top_candidates.json     top Stage 1 winners             ← commit this
+    ├── thinking_log.md         director reasoning trail        (do not commit)
+    ├── tournament_log.jsonl    round-by-round scores           (do not commit)
+    └── last_run.json           last run summary                (do not commit)
 ```
 
 The Autoforge root has zero domain knowledge. `simulation.py` is the only file that knows what your domain is.
@@ -296,10 +244,10 @@ The director issues a verdict after every batch:
 
 | Verdict | Meaning | Action |
 |---|---|---|
-| `converging` | Score and playbook improving | Keep running |
+| `converging` | Score and playbook improving steadily | Keep running |
 | `exploring` | Mixed results, still searching | Keep running |
-| `stalled` | No progress for multiple batches | Adjust sim or prompts |
-| `reward_hacking` | Score rising for wrong reason | Stop — fix the sim |
+| `stalled` | No improvement for multiple batches | Adjust sim or prompts |
+| `reward_hacking` | Score rising for wrong reason | Stop — fix simulation.py |
 | `needs_calibration` | Sim rewarding wrong behavior | Fix simulation.py |
 | `saturated` | Playbook full, score stable | Export and train local model |
 
@@ -307,83 +255,81 @@ The director issues a verdict after every batch:
 
 ---
 
-## Stage 3: Choosing Your Local Model
+## Stage 3: Choosing a Local Model
 
-The choice depends on what your domain's inputs look like:
-
-**Numerical domain** (grain prices, basis, demand, scores, rates):
-
-```bash
-# export produces features + labels
+**Numerical domain** (prices, rates, scores, demand signals):
+```python
+# export produces training_features.csv + labels
 python run.py export --domain GrainMarketing
-# train XGBoost — tiny, fast, explainable
+# train XGBoost — <1MB model, microsecond inference
 import xgboost as xgb
-model = xgb.train(params, dtrain)  # <1MB model, microsecond inference
+model = xgb.train(params, xgb.DMatrix(X, label=y))
 ```
 
 **Language domain** (text classification, routing, document scoring):
-
 ```bash
 # export produces messages JSONL
 python run.py export --domain TicketTriage
-# fine-tune Qwen 1.5b via MLX-LM on Apple Silicon
+# fine-tune Qwen 1.5B via MLX-LM on Apple Silicon
 mlx_lm.lora --model mlx-community/Qwen2.5-1.5B-Instruct-4bit \
              --data TicketTriage/ --train --iters 1000
 ```
 
-XGBoost is not "less AI" than Qwen — it's the right tool for a regression problem. A gradient boosted tree trained on 1,000 tournament examples will outperform a raw LLM on numerical decisions. Qwen earns its place when the inputs contain language that needs understanding.
+XGBoost trained on 1,000 tournament examples will outperform a raw LLM on numerical decisions. It is the right tool for a regression problem. Qwen earns its place when the inputs contain language that needs understanding.
 
 ---
 
 ## Cost
 
-```
-bootstrap              ~$0.05   one-time per domain
-Stage 1 (procedural)   $0.00    evolutionary, no API
-Stage 2 (AI)           ~$0.50   per 5-batch run to saturation
-Stage 3 training       $0.00    local compute only
-Stage 3 inference      $0.00    forever
-```
+| Stage | Cost | Notes |
+|---|---|---|
+| `bootstrap` | ~$0.05 | One-time per domain |
+| Stage 1 | $0.00 | Evolutionary, no API calls |
+| Stage 2 | ~$0.50 | Per 5-batch run to saturation |
+| Stage 3 training | $0.00 | Local compute only |
+| Stage 3 inference | $0.00 | Forever |
 
-Total to go from description → trained local model: **~$4**.
+**Total: ~$4** to go from plain English description to a trained local model.
 
 ---
 
-## BYOK — Model Configuration
+## Model Configuration
 
-All models are configurable. Set in `MyDomain/.env`:
+All models are configurable. Set in `MyDomain/.env` or the root `.env`:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 
-# Override any model (optional)
-ENGINE_DIRECTOR_MODEL=claude-sonnet-4-6        # between-batch director
-ENGINE_LIBRARY_MODEL=claude-sonnet-4-6         # archetype generation
-ENGINE_EXTRACT_MODEL=claude-haiku-4-5-20251001 # principle extraction (runs every 10 rounds)
+# Override any model (optional — defaults shown)
+AUTOFORGE_DIRECTOR_MODEL=claude-sonnet-4-6        # between-batch director
+AUTOFORGE_LIBRARY_MODEL=claude-sonnet-4-6         # archetype generation
+AUTOFORGE_EXTRACT_MODEL=claude-haiku-4-5-20251001 # principle extraction
 ```
 
-Tighter budget: swap Sonnet for Haiku everywhere. More quality: use Opus for the director. Same engine, different cost/quality point.
+Tighter budget: swap Sonnet for Haiku everywhere. More quality: use Opus for the director.
 
 ---
 
-## Compared to autoresearch
-
-Karpathy's autoresearch autonomously improves a language model training loop: one experiment at a time, agent modifies `train.py`, runs for 5 minutes, checks `val_bpb`, keeps or discards. Elegant and simple.
-
-Autoforge generalizes this to any structured decision domain:
+## Compared to Karpathy's autoresearch
 
 | | autoresearch | Autoforge |
 |---|---|---|
 | Strategy space | Open-ended (any code change) | Constrained (CANDIDATE_SCHEMA) |
-| Experiments | One at a time, 5 min each | 16 simultaneously, milliseconds |
-| Tracking | git commits | playbook.jsonl + thinking_log.md |
+| Experiments | One at a time, ~5 min each | 16 simultaneously, milliseconds |
+| Experiment tracking | git commits | playbook.jsonl + thinking_log.md |
 | Output | Improved train.py | Trained local model |
 | Domain | Language model training | Any structured decision |
 
-Both are valid. autoresearch goes deep on one idea. Autoforge goes wide across many simultaneously, then distills what won into a deployable model.
+autoresearch goes deep on one idea at a time. Autoforge goes wide across many simultaneously, then distills what won into a deployable model.
 
 ---
 
 ## Hardware
 
-Designed to run on a Mac Mini M4 overnight unattended. Simulation runs in pure Python — no GPU needed for scoring. Stage 3 fine-tuning (if LLM): MLX-LM on Apple Silicon. Stage 3 training (if XGBoost): any hardware, seconds to train.
+Designed to run on a Mac Mini M4 overnight unattended. Simulation runs in pure Python — no GPU needed for Stage 1 or 2. Stage 3 training: XGBoost runs on any hardware in seconds. Stage 3 fine-tuning (LLM path): MLX-LM on Apple Silicon.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

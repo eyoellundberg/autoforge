@@ -13,6 +13,8 @@ from rich.console import Console
 ENGINE_ROOT = Path(__file__).parent.parent
 console = Console()
 
+MODEL_DIRECTOR = os.environ.get("AUTOFORGE_DIRECTOR_MODEL", "claude-sonnet-4-6")
+
 
 # ── Director schema ─────────────────────────────────────────────────────────
 
@@ -183,7 +185,7 @@ Cap retirements at 2 per batch. Only retire if you have clear evidence the princ
     import anthropic
     client = anthropic.Anthropic()
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=MODEL_DIRECTOR,
         max_tokens=2048,
         system=system_prompt,
         messages=[{"role": "user", "content": prompt}],

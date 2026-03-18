@@ -14,7 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 
 
-MODEL_EXTRACT = os.environ.get("ENGINE_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
+MODEL_EXTRACT = os.environ.get("AUTOFORGE_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
 
 
 def _load_env(domain_path: Path):
