@@ -1,6 +1,18 @@
 [
   {
-    "name": "Downtrend Predator",
+    "name": "procedural_6",
+    "strategy": {
+      "fast_window": 3,
+      "slow_window": 14,
+      "entry_threshold": 0.001,
+      "exit_threshold": 0.0033,
+      "position_size": 0.7264,
+      "regime_filter": "none"
+    },
+    "wins": 16
+  },
+  {
+    "name": "procedural_0",
     "strategy": {
       "fast_window": 8,
       "slow_window": 40,
@@ -9,42 +21,30 @@
       "position_size": 0.9,
       "regime_filter": "none"
     },
-    "wins": 16
+    "wins": 13
   },
   {
-    "name": "Weak Trend Sniper",
+    "name": "procedural_2",
     "strategy": {
-      "fast_window": 4,
-      "slow_window": 13,
+      "fast_window": 6,
+      "slow_window": 40,
       "entry_threshold": 0.002,
-      "exit_threshold": 0.015,
-      "position_size": 0.6,
-      "regime_filter": "none"
-    },
-    "wins": 15
-  },
-  {
-    "name": "Micro Pulse Turbo",
-    "strategy": {
-      "fast_window": 3,
-      "slow_window": 14,
-      "entry_threshold": 0.001,
-      "exit_threshold": 0.006,
-      "position_size": 0.65,
+      "exit_threshold": 0.012,
+      "position_size": 0.9,
       "regime_filter": "none"
     },
     "wins": 12
   },
   {
-    "name": "Range Ghost",
+    "name": "procedural_4",
     "strategy": {
       "fast_window": 4,
-      "slow_window": 18,
-      "entry_threshold": 0.001,
-      "exit_threshold": 0.005,
-      "position_size": 0.1,
+      "slow_window": 13,
+      "entry_threshold": 0.002,
+      "exit_threshold": 0.0098,
+      "position_size": 0.6,
       "regime_filter": "none"
     },
-    "wins": 8
+    "wins": 10
   }
 ]
