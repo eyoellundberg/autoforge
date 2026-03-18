@@ -7,7 +7,7 @@ import sys
 
 from rich.table import Table
 
-from commands.shared import ENGINE_ROOT, console
+from commands.shared import ENGINE_ROOT, console, load_env
 
 
 def _print_validation(ok: list, warnings: list, errors: list):
@@ -31,12 +31,7 @@ def cmd_calibrate(args):
         print(f"Domain not found: {domain_path}")
         sys.exit(1)
 
-    for env_file in [domain_path / ".env", ENGINE_ROOT / ".env"]:
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                if line.strip() and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
+    load_env(domain_path)
 
     sys.path.insert(0, str(domain_path))
     os.chdir(domain_path)
@@ -547,12 +542,7 @@ def cmd_eval(args):
         print('  {"id": "test_1", "state": {...}, "description": "...", "min_score": 0}')
         sys.exit(1)
 
-    for env_file in [domain_path / ".env", ENGINE_ROOT / ".env"]:
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                if line.strip() and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
+    load_env(domain_path)
 
     sys.path.insert(0, str(domain_path))
     os.chdir(domain_path)
@@ -661,12 +651,7 @@ def cmd_import(args):
         print(f"File not found: {args.file}")
         sys.exit(1)
 
-    for env_file in [domain_path / ".env", ENGINE_ROOT / ".env"]:
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                if line.strip() and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
+    load_env(domain_path)
 
     sys.path.insert(0, str(domain_path))
     os.chdir(domain_path)

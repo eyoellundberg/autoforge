@@ -12,18 +12,9 @@ import json
 import os
 from pathlib import Path
 
+from commands.shared import load_env
 
 MODEL_LIBRARY = os.environ.get("AUTOFORGE_LIBRARY_MODEL", "claude-sonnet-4-6")
-
-
-def _load_env(domain_path: Path):
-    """Load .env from domain folder, then engine root as fallback."""
-    for env in [domain_path / ".env", domain_path.parent / ".env"]:
-        if env.exists() and not os.environ.get("ANTHROPIC_API_KEY"):
-            for line in env.read_text().splitlines():
-                if line.strip() and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
 
 
 def _sanitize_for_api(schema: dict) -> dict:
@@ -164,7 +155,7 @@ def call_library(
 
     Returns list of archetype dicts: [{name, philosophy, best_for, strategy}, ...]
     """
-    _load_env(domain_path)
+    load_env(domain_path)
 
     system_text = (
         "You are an expert strategy architect. Generate a diverse, opinionated library of "

@@ -9,6 +9,7 @@ Copy this file into your domain folder and adapt the context dict
 Everything else can stay as-is.
 """
 
+import heapq
 import json
 import sys
 from pathlib import Path
@@ -19,6 +20,10 @@ sys.path.insert(0, str(ENGINE_ROOT))
 
 from engine_extract import extract_principles_ai
 from simulation import simulate, random_state, CANDIDATE_SCHEMA, METRIC_NAME
+try:
+    from simulation import prepare_state as _prepare_state
+except ImportError:
+    _prepare_state = None
 
 
 DOMAIN_PATH = Path(__file__).parent
@@ -37,18 +42,18 @@ def _save_playbook(playbook: list):
             f.write(json.dumps(entry) + "\n")
 
 
-def _log_round(log_path: Path, round_num: int, winner: dict, score: float, state: dict, archetype_name: str = None):
+def _log_round(log_file, round_num: int, winner: dict, score: float, state: dict, archetype_name: str = None, score_margin: float = 0.0):
     entry = {
-        "round":  round_num,
-        "score":  score,
-        "metric": METRIC_NAME,
-        "winner": winner,
-        "state":  state,
+        "round":        round_num,
+        "score":        score,
+        "score_margin": score_margin,
+        "metric":       METRIC_NAME,
+        "winner":       winner,
+        "state":        state,
     }
     if archetype_name:
         entry["archetype"] = archetype_name
-    with open(log_path, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    log_file.write(json.dumps(entry) + "\n")
 
 
 def _build_context(state: dict) -> dict:
@@ -64,9 +69,10 @@ def _build_context(state: dict) -> dict:
 def _score_round(args):
     """Score all candidates against one state. Module-level for multiprocessing pickling."""
     state, candidates, candidate_names = args
-    scored = [(simulate(c, state), c, n) for c, n in zip(candidates, candidate_names)]
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return scored
+    if _prepare_state is not None:
+        state = _prepare_state(state)
+    all_results = [(simulate(c, state), c, n) for c, n in zip(candidates, candidate_names)]
+    return heapq.nlargest(4, all_results, key=lambda x: x[0])
 
 
 def run_batch(
@@ -143,43 +149,45 @@ def run_batch(
         all_scored = [_score_round((state, candidates, candidate_names)) for state in states]
 
     # Process results sequentially (win tracking, playbook extraction)
-    for i, (scored, state, context) in enumerate(zip(all_scored, states, contexts)):
-        round_num = generation_offset + i + 1
-        winner_score, winner, winner_name = scored[0]
-        losers = [c for _, c, _ in scored[1:4]]
+    with open(log_path, "a") as log_file:
+        for i, (scored, state, context) in enumerate(zip(all_scored, states, contexts)):
+            round_num = generation_offset + i + 1
+            winner_score, winner, winner_name = scored[0]
+            losers = [c for _, c, _ in scored[1:4]]
+            score_margin = round(scored[0][0] - scored[1][0], 4) if len(scored) > 1 else 0.0
 
-        scores.append(winner_score)
-        _log_round(log_path, round_num, winner, winner_score, state, winner_name)
+            scores.append(winner_score)
+            _log_round(log_file, round_num, winner, winner_score, state, winner_name, score_margin)
 
-        # Track archetype win counts
-        if winner_name not in archetype_wins:
-            archetype_wins[winner_name]         = 0
-            archetype_wins_event[winner_name]   = 0
-            archetype_wins_nonevent[winner_name] = 0
-        archetype_wins[winner_name] += 1
-        is_event = state.get("is_event", False)
-        if is_event:
-            archetype_wins_event[winner_name] += 1
-        else:
-            archetype_wins_nonevent[winner_name] += 1
+            # Track archetype win counts
+            if winner_name not in archetype_wins:
+                archetype_wins[winner_name]         = 0
+                archetype_wins_event[winner_name]   = 0
+                archetype_wins_nonevent[winner_name] = 0
+            archetype_wins[winner_name] += 1
+            is_event = state.get("is_event", False)
+            if is_event:
+                archetype_wins_event[winner_name] += 1
+            else:
+                archetype_wins_nonevent[winner_name] += 1
 
-        # Track context distribution
-        for k, v in context.items():
-            key = f"{k}:{v}"
-            context_mix[key] = context_mix.get(key, 0) + 1
+            # Track context distribution
+            for k, v in context.items():
+                key = f"{k}:{v}"
+                context_mix[key] = context_mix.get(key, 0) + 1
 
-        # Extract principles every 10 rounds
-        if round_num % 10 == 0:
-            playbook = extract_principles_ai(
-                winner=winner,
-                losers=losers,
-                context=context,
-                score=winner_score,
-                generation=round_num,
-                existing=playbook,
-                domain_path=DOMAIN_PATH,
-            )
-            _save_playbook(playbook)
+            # Extract principles every 10 rounds
+            if round_num % 10 == 0:
+                playbook = extract_principles_ai(
+                    winner=winner,
+                    losers=losers,
+                    context=context,
+                    score=winner_score,
+                    generation=round_num,
+                    existing=playbook,
+                    domain_path=DOMAIN_PATH,
+                )
+                _save_playbook(playbook)
 
     # ── Champion propagation ──────────────────────────────────────────────────
     if archetypes and archetype_wins_nonevent:

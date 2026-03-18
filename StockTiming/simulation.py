@@ -76,6 +76,11 @@ def _generate_prices(state: dict) -> list:
     return prices
 
 
+def prepare_state(state: dict) -> dict:
+    """Generate the price path once per round, shared across all candidates."""
+    return {**state, "_prices": _generate_prices(state)}
+
+
 def _moving_average(prices: list, window: int, end: int) -> float:
     start = max(0, end - window + 1)
     return sum(prices[start:end + 1]) / (end - start + 1)
@@ -93,7 +98,7 @@ def simulate(candidate: dict, state: dict) -> float:
     size  = candidate["position_size"]
     filt  = candidate["regime_filter"]
 
-    prices    = _generate_prices(state)
+    prices    = state.get("_prices") or _generate_prices(state)
     n         = len(prices)
     capital   = 1.0
     position  = 0.0

@@ -13,18 +13,9 @@ import os
 from collections import defaultdict
 from pathlib import Path
 
+from commands.shared import load_env
 
 MODEL_EXTRACT = os.environ.get("AUTOFORGE_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
-
-
-def _load_env(domain_path: Path):
-    """Load .env from domain folder, then engine root as fallback."""
-    for env in [domain_path / ".env", domain_path.parent / ".env"]:
-        if env.exists() and not os.environ.get("ANTHROPIC_API_KEY"):
-            for line in env.read_text().splitlines():
-                if line.strip() and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
 
 
 # ── Structured output schema ───────────────────────────────────────────────────
@@ -112,7 +103,7 @@ def extract_principles_ai(
     if domain_path is None:
         domain_path = Path(__file__).parent
 
-    _load_env(domain_path)
+    load_env(domain_path)
 
     rt_path = domain_path / "retired_topics.json"
     retired = json.loads(rt_path.read_text()) if rt_path.exists() else []

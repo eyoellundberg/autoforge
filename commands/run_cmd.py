@@ -14,6 +14,7 @@ from rich.table import Table
 from commands.shared import (
     ENGINE_ROOT,
     console,
+    load_env,
     call_director,
     append_thinking_log,
     git_commit_batch,
@@ -30,12 +31,7 @@ def cmd_run(args):
         sys.exit(1)
 
     # Load .env: domain folder first, then engine root as fallback
-    for env_file in [domain_path / ".env", ENGINE_ROOT / ".env"]:
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                if line.strip() and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
+    load_env(domain_path)
 
     sys.path.insert(0, str(domain_path))
     os.chdir(domain_path)
