@@ -3,10 +3,11 @@ name = "autoforge"
 version = "0.1.0"
 description = "Autonomous strategy learning via simulation tournament + AI direction"
 requires-python = ">=3.10"
-dependencies = [
-    "anthropic>=0.50.0",
-    "rich>=13.0.0",
-]
+dependencies = []
+
+[project.optional-dependencies]
+train-numeric  = ["xgboost", "pandas", "numpy"]
+train-language = ["mlx-lm"]
 
 [project.scripts]
 autoforge = "run:main"

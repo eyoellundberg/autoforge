@@ -8,13 +8,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from rich.panel import Panel
-from rich.table import Table
-
 from commands.shared import (
     ENGINE_ROOT,
     get_ai_backend,
-    console,
     load_env,
     call_director,
     append_thinking_log,
@@ -180,10 +176,10 @@ def cmd_run(args):
                     if analysis["concerns"]:
                         print(f"  ! {analysis['concerns'][0]}")
                     if verdict == "needs_calibration" and analysis.get("simulation_fix_suggestions"):
-                        console.print("\n[yellow bold]Simulation fix suggestions:[/yellow bold]")
+                        print("\nSimulation fix suggestions:")
                         for fix in analysis["simulation_fix_suggestions"]:
-                            console.print(f"  [yellow]• {fix}[/yellow]")
-                        console.print(f"[dim]  Edit {args.domain}/simulation.py and re-run calibrate.[/dim]\n")
+                            print(f"  * {fix}")
+                        print(f"  Edit {args.domain}/simulation.py and re-run calibrate.\n")
                 except Exception as e:
                     print(f"  [director error: {e}] — continuing")
                     analysis = {"verdict": "exploring", "hints": hints, "retire_principles": [],
@@ -262,10 +258,10 @@ def cmd_run(args):
                 print("! Reward hacking flagged — stopping run.")
                 fixes = analysis.get("simulation_fix_suggestions", [])
                 if fixes:
-                    console.print("\n[red bold]Simulation fix suggestions:[/red bold]")
+                    print("\nSimulation fix suggestions:")
                     for fix in fixes:
-                        console.print(f"  [red]• {fix}[/red]")
-                    console.print(f"\n[dim]Edit {args.domain}/simulation.py, then re-run calibrate.[/dim]")
+                        print(f"  * {fix}")
+                    print(f"\n  Edit {args.domain}/simulation.py, then re-run calibrate.")
                 else:
                     print(f"  Check thinking_log.md for details.")
                 stop_reason = "reward_hacking"
@@ -304,29 +300,23 @@ def cmd_run(args):
     # Terminal bell
     print("\a", end="", flush=True)
 
-    # Rich summary
-    table = Table(title=f"Run Summary — {args.domain}", show_header=True)
-    table.add_column("Batch", style="dim", width=6)
-    table.add_column("Avg", justify="right")
-    table.add_column("Best", justify="right")
-    table.add_column("Trend", justify="center")
+    # Summary table
+    print(f"\nRun Summary — {args.domain}")
+    print(f"  {'Batch':<7} {'Avg':>7} {'Best':>7}  Trend")
+    print(f"  {'─'*32}")
     for row in all_batch_rows:
-        trend_display = {"up": "[green]up[/green]", "down": "[red]down[/red]", "flat": "flat", "--": "--"}.get(row["trend"], row["trend"])
-        table.add_row(str(row["batch"]), str(row["avg"]), str(row["best"]), trend_display)
-    console.print()
-    console.print(table)
+        arrow = "up" if row["trend"] == "up" else ("down" if row["trend"] == "down" else row["trend"])
+        print(f"  {row['batch']:<7} {row['avg']:>7} {row['best']:>7}  {arrow}")
 
-    verdict_color = {
-        "converging": "green", "saturated": "green", "exploring": "yellow",
-        "stalled": "yellow", "reward_hacking": "red", "needs_calibration": "red",
-    }.get(final_verdict, "white")
-    panel_content = f"[{verdict_color}]Verdict: {final_verdict}[/{verdict_color}]"
+    print(f"\n{'─'*50}")
+    print(f"Final State")
+    print(f"  Verdict:      {final_verdict}")
     if stop_reason:
-        panel_content += f"\nStop reason: {stop_reason}"
+        print(f"  Stop reason:  {stop_reason}")
     if prior_analysis and prior_analysis.get("concerns"):
-        panel_content += f"\nTop concern: {prior_analysis['concerns'][0]}"
-    panel_content += f"\nThinking log: {thinking_log}"
-    console.print(Panel(panel_content, title="Final State"))
+        print(f"  Top concern:  {prior_analysis['concerns'][0]}")
+    print(f"  Thinking log: {thinking_log}")
+    print(f"{'─'*50}")
 
     # Print champion archetype if it exists
     champion_path = domain_path / "champion_archetype.json"

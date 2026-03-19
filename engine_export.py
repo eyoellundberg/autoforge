@@ -323,4 +323,4 @@ Abstention pattern (recommended):
         print(f"  training_data.jsonl — {written} examples")
         if pref_written:
             print(f"  training_preferences.jsonl — {pref_written} pairwise preferences")
-        print(f"  Fine-tune: mlx_lm.lora --model mlx-community/Qwen2.5-1.5B-Instruct-4bit --data {domain_name}/ --train")
+        print(f"  Fine-tune: mlx_lm.lora --model mlx-community/Qwen3-4B-4bit --data {domain_name}/ --train")

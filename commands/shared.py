@@ -6,13 +6,12 @@ import json
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from rich.console import Console
-
 ENGINE_ROOT = Path(__file__).parent.parent
-console = Console()
 
 
 def load_sim(domain_path: Path):
@@ -83,13 +82,7 @@ def ai_backend_available() -> bool:
     if backend == "manual":
         return True
     if backend == "anthropic":
-        if not _valid_anthropic_key():
-            return False
-        try:
-            import anthropic  # noqa: F401
-        except Exception:
-            return False
-        return True
+        return _valid_anthropic_key()
     if backend == "openai":
         if not _valid_openai_key():
             return False
@@ -140,9 +133,9 @@ def _manual_ai_roundtrip(
     }
     request_path.write_text(json.dumps(payload, indent=2) + "\n")
 
-    console.print(
-        f"[cyan]manual-ai[/cyan] Waiting for `{task_name}` response:\n"
-        f"  request: {request_path}\n"
+    print(
+        f"manual-ai: waiting for `{task_name}` response\n"
+        f"  request:  {request_path}\n"
         f"  reply to: {response_path}"
     )
 
@@ -188,20 +181,39 @@ def structured_ai_call(
         )
 
     if backend == "anthropic":
-        import anthropic
-        client = anthropic.Anthropic()
-        kwargs = dict(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-            output_config={"format": {"type": "json_schema", "schema": schema}},
-        )
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not set")
+        payload: dict = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+            "output_config": {"format": {"type": "json_schema", "schema": schema}},
+        }
         if thinking:
-            kwargs["thinking"] = {"type": "adaptive"}
-        response = client.messages.create(**kwargs)
-        text_block = next(b for b in response.content if b.type == "text")
-        return json.loads(text_block.text)
+            # adaptive thinking: Claude decides when/how much to think (Opus 4.6 + Sonnet 4.6)
+            # interleaved thinking is automatic with adaptive — no beta header needed
+            payload["thinking"] = {"type": "adaptive"}
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=json.dumps(payload).encode(),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                body = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            err = json.loads(e.read().decode())
+            raise RuntimeError(f"Anthropic API {e.code}: {err.get('error', {}).get('message', err)}")
+        text_block = next(b for b in body["content"] if b["type"] == "text")
+        return json.loads(text_block["text"])
 
     if backend == "openai":
         import openai

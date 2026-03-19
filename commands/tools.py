@@ -5,9 +5,7 @@ commands/tools.py — cmd_calibrate, cmd_validate, cmd_status, cmd_export subcom
 import json
 import sys
 
-from rich.table import Table
-
-from commands.shared import ENGINE_ROOT, console, load_env, load_sim, normalize_confidence
+from commands.shared import ENGINE_ROOT, load_env, load_sim, normalize_confidence
 
 
 def _print_validation(ok: list, warnings: list, errors: list):
@@ -97,63 +95,55 @@ def cmd_calibrate(args):
             adversary_wins[adversaries[winner_idx - 8][0]] += 1
 
     # ── Scenario distribution ─────────────────────────────────────────────────
-    tbl = Table(title=f"Scenario Distribution ({n} samples)", show_header=True)
-    tbl.add_column("Key")
-    tbl.add_column("Type")
-    tbl.add_column("Distribution")
-
+    print(f"\nScenario Distribution ({n} samples)")
+    print(f"  {'Key':<24} {'Type':<12} Distribution")
+    print(f"  {'─'*72}")
     for k in list(states[0].keys()):
         vals = [s[k] for s in states if k in s]
         if not vals:
             continue
         if isinstance(vals[0], bool):
             true_pct = sum(1 for v in vals if v) / len(vals) * 100
-            tbl.add_row(k, "bool", f"{true_pct:.0f}% True  /  {100-true_pct:.0f}% False")
+            dist = f"{true_pct:.0f}% True  /  {100-true_pct:.0f}% False"
+            typ = "bool"
         elif isinstance(vals[0], (int, float)):
-            tbl.add_row(k, "number",
-                f"min {min(vals):.2f}  median {statistics.median(vals):.2f}  max {max(vals):.2f}")
+            dist = f"min {min(vals):.2f}  median {statistics.median(vals):.2f}  max {max(vals):.2f}"
+            typ = "number"
         else:
             counts = collections.Counter(vals)
             top = sorted(counts.items(), key=lambda x: -x[1])[:6]
-            tbl.add_row(k, "categorical",
-                "  ".join(f"{v}: {c/len(vals)*100:.0f}%" for v, c in top))
-
-    console.print(tbl)
+            dist = "  ".join(f"{v}: {c/len(vals)*100:.0f}%" for v, c in top)
+            typ = "categorical"
+        print(f"  {k:<24} {typ:<12} {dist}")
 
     # ── Score distribution ────────────────────────────────────────────────────
     s = sorted(all_scores)
     q1  = s[len(s) // 4]
     q3  = s[3 * len(s) // 4]
-    stbl = Table(title=f"Score Distribution ({sim.METRIC_NAME})", show_header=False)
-    stbl.add_column("Metric")
-    stbl.add_column("Value", justify="right")
+    print(f"\nScore Distribution ({sim.METRIC_NAME})")
     for label, val in [("min", min(all_scores)), ("p25", q1),
                        ("median", statistics.median(all_scores)),
                        ("p75", q3), ("max", max(all_scores)),
                        ("stdev", statistics.stdev(all_scores))]:
-        stbl.add_row(label, f"{val:.2f}")
-    console.print(stbl)
+        print(f"  {label:<8} {val:.2f}")
 
     # ── Dominance check ───────────────────────────────────────────────────────
-    wtbl = Table(title="Candidate Win Distribution (8 random strategies)", show_header=True)
-    wtbl.add_column("Candidate")
-    wtbl.add_column("Wins", justify="right")
-    wtbl.add_column("Win %", justify="right")
+    print(f"\nCandidate Win Distribution (8 random strategies)")
+    print(f"  {'Candidate':<14} {'Wins':>6} {'Win %':>7}")
+    print(f"  {'─'*30}")
     for i in range(len(candidates)):
         wins = win_counts.get(i, 0)
-        wtbl.add_row(f"candidate_{i}", str(wins), f"{wins/n*100:.0f}%")
-    console.print(wtbl)
+        print(f"  {'candidate_'+str(i):<14} {wins:>6} {wins/n*100:>6.0f}%")
 
     # ── Sanity adversary check ────────────────────────────────────────────────
-    atbl = Table(title="Sanity Adversary Check (degenerate candidates — should lose)", show_header=True)
-    atbl.add_column("Adversary")
-    atbl.add_column("Wins", justify="right")
-    atbl.add_column("Win %", justify="right")
+    print(f"\nSanity Adversary Check (degenerate candidates — should lose)")
+    print(f"  {'Adversary':<12} {'Wins':>6} {'Win %':>7}  Status")
+    print(f"  {'─'*38}")
     for label, _ in adversaries:
         wins = adversary_wins.get(label, 0)
-        color = "red" if wins / n > 0.25 else ("yellow" if wins / n > 0.10 else "green")
-        atbl.add_row(label, str(wins), f"[{color}]{wins/n*100:.0f}%[/{color}]")
-    console.print(atbl)
+        pct = wins / n * 100
+        status = "FAIL" if pct > 25 else ("warn" if pct > 10 else "ok")
+        print(f"  {label:<12} {wins:>6} {pct:>6.0f}%  {status}")
 
     # ── Verdict ───────────────────────────────────────────────────────────────
     issues = []
@@ -175,13 +165,13 @@ def cmd_calibrate(args):
         issues.append(f"{zero_pct:.0f}% of rounds score 0 — check simulate() edge cases")
 
     if issues:
-        console.print("\n[yellow]Calibration warnings:[/yellow]")
+        print("\nCalibration warnings:")
         for issue in issues:
-            console.print(f"  [yellow]! {issue}[/yellow]")
-        console.print(f"\n[dim]Edit {args.domain}/simulation.py and re-run calibrate.[/dim]")
+            print(f"  ! {issue}")
+        print(f"\n  Edit {args.domain}/simulation.py and re-run calibrate.")
     else:
-        console.print(f"\n[green]Calibration looks good.[/green]")
-        console.print(f"  python run.py run --domain {args.domain} --batches 3 --rounds 50")
+        print(f"\nCalibration looks good.")
+        print(f"  python run.py run --domain {args.domain} --batches 3 --rounds 50")
 
 
 def cmd_validate(args):
@@ -369,27 +359,20 @@ def cmd_status(args):
     if pb_path.exists():
         playbook = [json.loads(l) for l in pb_path.read_text().splitlines() if l.strip()]
         top5 = sorted(playbook, key=lambda p: normalize_confidence(p.get("confidence", 0)), reverse=True)[:5]
-        tbl = Table(title=f"Playbook — {len(playbook)} principles", show_header=True)
-        tbl.add_column("Topic")
-        tbl.add_column("Conf", justify="right")
-        tbl.add_column("Principle")
+        print(f"\nPlaybook — {len(playbook)} principles (top 5)")
+        print(f"  {'Topic':<22} {'Conf':>5}  Principle")
+        print(f"  {'─'*72}")
         for p in top5:
-            tbl.add_row(
-                p.get("topic", ""),
-                f"{normalize_confidence(p.get('confidence', 0)):.0%}",
-                p.get("principle", "")[:60],
-            )
-        console.print(tbl)
+            print(f"  {p.get('topic',''):<22} {normalize_confidence(p.get('confidence',0)):>4.0%}  {p.get('principle','')[:60]}")
     else:
-        console.print("Playbook: not found")
+        print("Playbook: not found")
 
     # Champion
     champion_path = domain_path / "champion_archetype.json"
     if champion_path.exists():
         try:
             champ = json.loads(champion_path.read_text())
-            line = f"Champion: {champ.get('name', 'unknown')} — {champ.get('philosophy', '')[:70]}"
-            console.print(f"\n[bold]{line}[/bold]")
+            print(f"\nChampion: {champ.get('name', 'unknown')} — {champ.get('philosophy', '')[:70]}")
         except Exception:
             pass
 
@@ -399,8 +382,7 @@ def cmd_status(args):
         try:
             retired = json.loads(rt_path.read_text())
             if retired:
-                msg = f"Retired topics ({len(retired)}): {', '.join(retired)}"
-                console.print(f"\n[dim]{msg}[/dim]")
+                print(f"\nRetired topics ({len(retired)}): {', '.join(retired)}")
         except Exception:
             pass
 
@@ -409,13 +391,10 @@ def cmd_status(args):
     if last_run_path.exists():
         try:
             lr = json.loads(last_run_path.read_text())
-            lines = [
-                f"Last run: {lr.get('timestamp', 'unknown')[:19]}",
-                f"  Rounds: {lr.get('total_rounds', 0)}   Verdict: {lr.get('final_verdict', 'unknown')}",
-            ]
+            print(f"\nLast run: {lr.get('timestamp', 'unknown')[:19]}")
+            print(f"  Rounds: {lr.get('total_rounds', 0)}   Verdict: {lr.get('final_verdict', 'unknown')}")
             if lr.get("stop_reason"):
-                lines.append(f"  Stop reason: {lr['stop_reason']}")
-            console.print("\n" + "\n".join(lines))
+                print(f"  Stop reason: {lr['stop_reason']}")
         except Exception:
             pass
 
@@ -427,20 +406,18 @@ def cmd_status(args):
     if log_path.exists():
         try:
             n_rounds = sum(1 for l in log_path.read_text().splitlines() if l.strip())
-            td_exists = td_path.exists()
-            msg = f"tournament_log.jsonl: {n_rounds} rounds"
-            if td_exists:
+            print(f"\ntournament_log.jsonl: {n_rounds} rounds")
+            if td_path.exists():
                 n_td = sum(1 for l in td_path.read_text().splitlines() if l.strip())
-                msg += f"   training_data.jsonl: {n_td} examples (ready)"
+                print(f"training_data.jsonl:  {n_td} examples (ready)")
             else:
-                msg += "   training_data.jsonl: not yet exported"
+                print(f"training_data.jsonl:  not yet exported")
             if pref_path.exists():
                 n_pref = sum(1 for l in pref_path.read_text().splitlines() if l.strip())
-                msg += f"   training_preferences.jsonl: {n_pref} pairs"
+                print(f"training_preferences.jsonl: {n_pref} pairs")
             if threshold_path.exists():
                 threshold = json.loads(threshold_path.read_text()).get("threshold")
-                msg += f"   abstain_threshold: {threshold}"
-            console.print(f"\n[dim]{msg}[/dim]")
+                print(f"abstain_threshold: {threshold}")
         except Exception:
             pass
 
@@ -624,12 +601,9 @@ def cmd_eval(args):
         print("evals/scenarios.jsonl is empty or has no valid JSON lines.")
         sys.exit(1)
 
-    tbl = Table(title=f"Eval Results — {args.domain} ({len(scenarios)} scenarios)", show_header=True)
-    tbl.add_column("ID")
-    tbl.add_column("Description")
-    tbl.add_column("Score", justify="right")
-    tbl.add_column("Min", justify="right")
-    tbl.add_column("Pass", justify="center")
+    print(f"\nEval Results — {args.domain} ({len(scenarios)} scenarios)")
+    print(f"  {'ID':<16} {'Description':<42} {'Score':>7} {'Min':>6}  Pass")
+    print(f"  {'─'*80}")
 
     passed = 0
     for scen in scenarios:
@@ -638,26 +612,17 @@ def cmd_eval(args):
         description = scen.get("description", "")[:40]
         scen_id     = scen.get("id", "?")
 
-        # Score with each strategy, take best
         best_score = max(sim.simulate(s["strategy"], state) for s in strategies)
         ok = best_score >= min_score
         if ok:
             passed += 1
-        color = "green" if ok else "red"
-        tbl.add_row(
-            scen_id,
-            description,
-            f"[{color}]{best_score:.2f}[/{color}]",
-            f"{min_score:.2f}",
-            f"[{color}]{'✓' if ok else '✗'}[/{color}]",
-        )
+        mark = "✓" if ok else "✗"
+        print(f"  {scen_id:<16} {description:<42} {best_score:>7.2f} {min_score:>6.2f}  {mark}")
 
-    console.print(tbl)
     pct = passed / len(scenarios) * 100
-    color = "green" if pct >= 80 else ("yellow" if pct >= 50 else "red")
-    console.print(f"\n[{color}]{passed}/{len(scenarios)} passed ({pct:.0f}%)[/{color}]")
+    print(f"\n{passed}/{len(scenarios)} passed ({pct:.0f}%)")
     if pct < 80:
-        console.print("[dim]Run more batches to improve — then re-eval.[/dim]")
+        print("Run more batches to improve — then re-eval.")
     if passed < len(scenarios):
         sys.exit(1)
 
@@ -931,7 +896,7 @@ def cmd_import(args):
             }
             f.write(json.dumps(entry) + "\n")
 
-    console.print(f"\n[green]Imported {len(records)} records.[/green]")
-    console.print(f"  production_log.jsonl — provenance trail")
-    console.print(f"  tournament_log.jsonl — {len(records)} records added to Stage 3 training data")
-    console.print(f"\n[dim]Run 'python run.py export --domain {args.domain}' to include in Stage 3.[/dim]")
+    print(f"\nImported {len(records)} records.")
+    print(f"  production_log.jsonl — provenance trail")
+    print(f"  tournament_log.jsonl — {len(records)} records added to Stage 3 training data")
+    print(f"\nRun 'python run.py export --domain {args.domain}' to include in Stage 3.")
