@@ -1,16 +1,10 @@
 """
-engine_export.py — Stage 3 training data exporter.
+export.py — Stage 3 training data exporter.
 
-Reads tournament_log.jsonl and formats it as instruction-tuning JSONL
-for fine-tuning a local model. The local model learns:
-  given scenario + playbook context -> propose strategy parameters
-
-Output format: messages JSONL (compatible with OpenAI fine-tuning + MLX-LM)
-Also exports pairwise preferences when contender data exists.
-For numerical domains: also exports training_features.csv (XGBoost/sklearn)
-
-Usage (via run.py):
-  python run.py export --domain MyDomain
+Reads tournament_log.jsonl and exports:
+  - training_data.jsonl      instruction-tuning JSONL (MLX-LM / OpenAI format)
+  - training_preferences.jsonl  pairwise preference data
+  - training_features.csv    flat feature matrix for XGBoost (numerical domains)
 """
 
 import json
@@ -18,19 +12,13 @@ import csv
 import statistics
 from pathlib import Path
 
-from commands.shared import load_mission, normalize_confidence
+from utils import load_mission, load_world_model, normalize_confidence
 
 
-# Keys that are never the score field — used for backward-compat detection
 _NON_SCORE_KEYS = {"round", "winner", "state", "archetype", "metric", "score_margin", "contenders"}
 
 
 def _detect_score(entry: dict) -> float:
-    """
-    Return the score from a log entry.
-    Tries 'score' first (new format), then falls back to detecting the score
-    key by excluding known non-score keys (old format used METRIC_NAME as key).
-    """
     if "score" in entry:
         return float(entry["score"])
     for key, value in entry.items():
@@ -43,15 +31,10 @@ def _detect_score(entry: dict) -> float:
 
 
 def _format_scenario(state: dict) -> str:
-    """Format a state dict as a readable scenario block."""
-    lines = []
-    for k, v in state.items():
-        lines.append(f"  {k}: {v}")
-    return "\n".join(lines)
+    return "\n".join(f"  {k}: {v}" for k, v in state.items())
 
 
 def _format_playbook_context(playbook: list) -> str:
-    """Format playbook as bullet points for system context."""
     if not playbook:
         return "(no principles yet)"
     lines = []
@@ -64,7 +47,6 @@ def _format_playbook_context(playbook: list) -> str:
 
 
 def _format_strategy(strategy: dict) -> str:
-    """Format a strategy dict as stable JSON."""
     return json.dumps(strategy, sort_keys=True)
 
 
@@ -72,12 +54,10 @@ def _detect_domain_type(domain_path: Path) -> str:
     """
     Returns "numerical" if all CANDIDATE_SCHEMA params are numbers/integers/enums,
     "language" if any params are free-form strings.
-    Defaults to "numerical" if simulation.py can't be imported.
     """
-    import sys as _sys
+    import sys as _sys, importlib
     _sys.path.insert(0, str(domain_path))
     try:
-        import importlib
         sim = importlib.import_module("simulation")
         schema = getattr(sim, "CANDIDATE_SCHEMA", {})
         props  = schema.get("properties", {})
@@ -94,17 +74,9 @@ def _detect_domain_type(domain_path: Path) -> str:
 
 def export_training_data(domain_path: Path):
     """
-    Export tournament_log.jsonl as instruction-tuning JSONL for fine-tuning.
-
-    Quality filter: only keep rounds where score >= median score across all rounds.
-    Each kept round becomes one training example:
-      system: domain context + playbook principles
-      user:   scenario (state dict)
-      assistant: winner strategy (JSON)
-
-    For numerical domains: also exports training_features.csv (XGBoost/sklearn ready).
-
-    Output: domain_path/training_data.jsonl (and optionally training_features.csv)
+    Export tournament_log.jsonl as instruction-tuning JSONL.
+    Quality filter: only rounds where score >= median.
+    For numerical domains, also exports training_features.csv.
     """
     log_path = domain_path / "tournament_log.jsonl"
     pb_path  = domain_path / "playbook.jsonl"
@@ -115,7 +87,6 @@ def export_training_data(domain_path: Path):
         print("Run some batches first before exporting.")
         return
 
-    # Load all log entries
     raw_lines = [l.strip() for l in log_path.read_text().splitlines() if l.strip()]
     if not raw_lines:
         print("tournament_log.jsonl is empty — nothing to export.")
@@ -130,7 +101,6 @@ def export_training_data(domain_path: Path):
 
     total_rounds = len(entries)
 
-    # Detect scores and filter
     scored = []
     for entry in entries:
         try:
@@ -150,32 +120,32 @@ def export_training_data(domain_path: Path):
     print(f"Total rounds: {total_rounds}")
     print(f"After quality filter (score >= median {median_score:.2f}): {len(kept)} kept")
 
-    # Detect domain type from CANDIDATE_SCHEMA
     domain_type = _detect_domain_type(domain_path)
 
-    # Load playbook for context
     playbook = []
     if pb_path.exists():
         playbook = [json.loads(l) for l in pb_path.read_text().splitlines() if l.strip()]
     playbook_context = _format_playbook_context(playbook)
-    mission_text = load_mission(domain_path)
+
+    world_model = load_world_model(domain_path)
 
     system_parts = ["You are a strategy expert for this domain."]
-    if mission_text:
-        system_parts.append(f"Mission:\n{mission_text}")
+    if world_model:
+        system_parts.append(f"World Model:\n{world_model}")
+    else:
+        mission_text = load_mission(domain_path)
+        if mission_text:
+            system_parts.append(f"Mission:\n{mission_text}")
     system_parts.append(f"Playbook principles:\n{playbook_context}")
     system_content = "\n\n".join(system_parts)
 
-    # Write messages JSONL (always written for both domain types)
     written = 0
     with open(out_path, "w") as f:
         for score, entry in kept:
             state  = entry.get("state", {})
             winner = entry.get("winner", {})
-
             if not state or not winner:
                 continue
-
             example = {
                 "messages": [
                     {"role": "system",    "content": system_content},
@@ -186,7 +156,6 @@ def export_training_data(domain_path: Path):
             f.write(json.dumps(example) + "\n")
             written += 1
 
-    # Write pairwise preferences when top contenders are available
     pref_path = domain_path / "training_preferences.jsonl"
     pref_written = 0
     with open(pref_path, "w") as f:
@@ -223,8 +192,6 @@ def export_training_data(domain_path: Path):
                 pref_written += 1
 
     if domain_type == "numerical":
-        # Build CSV: state keys + winner keys + score + score_margin + uncertain columns
-        # Collect all state and winner keys from kept entries
         state_keys  = []
         winner_keys = []
         for _, entry in kept:
@@ -237,7 +204,6 @@ def export_training_data(domain_path: Path):
                 if k not in winner_keys:
                     winner_keys.append(k)
 
-        # Compute p25 of score_margin across all kept entries
         all_margins = [e.get("score_margin", None) for _, e in kept]
         has_margins = any(m is not None for m in all_margins)
         if has_margins:
@@ -282,20 +248,14 @@ def export_training_data(domain_path: Path):
             print(f"  training_preferences.jsonl — {pref_written} pairwise preferences")
         print(f"""
 This is a reward model dataset: features = state + strategy, label = score.
-Inference pattern: generate N candidate strategies, score each with XGBoost, pick the best.
+Inference: generate N candidate strategies, score each with XGBoost, pick the best.
 
   import pandas as pd, xgboost as xgb, numpy as np
   df = pd.read_csv('{domain_name}/training_features.csv')
   feature_cols = [c for c in df.columns if c != 'score']
   X, y = df[feature_cols].values, df['score'].values
   model = xgb.train({{'max_depth': 4, 'eta': 0.1, 'objective': 'reg:squarederror'}},
-                    xgb.DMatrix(X, label=y), num_boost_round=200)
-
-  # Inference: score N candidates, pick the best
-  def best_strategy(state: dict, candidates: list) -> dict:
-      rows = np.array([[*state.values(), *c.values()] for c in candidates])
-      scores = model.predict(xgb.DMatrix(rows))
-      return candidates[int(np.argmax(scores))]""")
+                    xgb.DMatrix(X, label=y), num_boost_round=200)""")
 
         if has_margins and p25_margin is not None:
             threshold_path = domain_path / "abstain_threshold.json"
@@ -305,17 +265,7 @@ Inference pattern: generate N candidate strategies, score each with XGBoost, pic
                 "note": "Escalate when the top candidate's predicted edge is smaller than this threshold.",
             }
             threshold_path.write_text(json.dumps(threshold_payload, indent=2) + "\n")
-            print(f"""
-Abstention pattern (recommended):
-  # At inference time, if the top candidate's predicted score advantage is small,
-  # escalate rather than act.
-  ABSTAIN_THRESHOLD = {round(p25_margin, 3)}  # bottom 25% of training margins
-  scores = model.predict(xgb.DMatrix(candidate_rows))
-  if scores.max() - np.median(scores) < ABSTAIN_THRESHOLD:
-      print("ABSTAIN: strategies are too close — escalate to human")
-  else:
-      best = candidates[int(np.argmax(scores))]""")
-            print(f"  abstain_threshold.json — threshold artifact written")
+            print(f"\nAbstain threshold: {round(p25_margin, 3)}  (written to abstain_threshold.json)")
 
     else:
         domain_name = domain_path.name

@@ -4,28 +4,111 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Claude](https://img.shields.io/badge/powered%20by-Claude-orange.svg)](https://anthropic.com)
 
-**Run millions of simulated scenarios to train a local specialist — before you have a single labeled example.**
+**Describe a decision. Get a deployed specialist. No labeled data.**
 
-You describe a decision your system needs to make. Autoforge writes a simulator, runs hundreds of thousands of competing strategies against it, and distills what consistently wins into a trained local model. No labeled data. No ongoing API costs after training.
+One command turns a plain-English description into a trained local model that makes domain-specific decisions — freight quoting, fraud detection, loan approval, anything with a scorable outcome. Autoforge writes the simulator, runs hundreds of thousands of competing strategies, and ships a standalone specialist you deploy and retrain on real outcomes. The AI builds the expertise, then gets out of the way.
 
 ---
 
-## The Core Idea
+## Quickstart
 
-Most ML projects stall waiting for labeled data. Autoforge sidesteps this entirely: **write a simulator that scores decisions, and the simulator becomes your dataset.**
+```bash
+uv pip install -e .         # or: pip install -e .
+export ANTHROPIC_API_KEY=sk-ant-...
 
-The engine runs 16 competing strategies across hundreds of thousands of scenarios, extracts the conditional principles that separate winners from losers, and exports that as training data for a local model. A single overnight run produces enough signal to train a specialist that runs forever at zero cost.
+autoforge FreightQuoting "freight brokerage load quoting, spot and contract lanes"
+```
+
+That's it. Autoforge will:
+
+```
+● [1/3] Bootstrap domain           — AI writes the simulator         (~$0.30)
+● [2/3] Validate simulation        — checks schema, score range       (free)
+● [3/3] Train                      — Stage 1 → Stage 2 → specialist  (~$0.50)
+
+✔ Done in 12m 34s.
+
+  Deploy:   cp -r FreightQuoting/specialist/ /your/app/
+  Use:      from specialist.predict import predict, record
+  Retrain:  python retrain.py
+```
+
+When it finishes, `FreightQuoting/specialist/` contains 4 files. Copy them anywhere. Zero Autoforge dependency.
+
+---
+
+## The Specialist
+
+Training produces a standalone module — no framework, no API calls, no Autoforge needed:
+
+```
+specialist/
+  predict.py     # predict() + record()
+  retrain.py     # retrains on real outcomes
+  model.json     # trained weights
+  config.json    # features, params, threshold
+```
+
+Two functions:
+
+```python
+from specialist.predict import predict, record
+
+# Make a decision
+result = predict({"lane_distance": 450, "weight": 42000, "volatility": 0.12})
+# → {"strategy": {"bid_margin": 0.12, ...}, "score": 6.4}
+# → {"action": "ABSTAIN", "reason": "strategies too close — escalate"}
+
+# Record what actually happened
+record(scenario, result["strategy"], actual_profit)
+```
+
+The specialist knows when to abstain. Low-confidence scenarios get escalated instead of answered.
+
+### Retraining
+
+The specialist retrains itself on real outcomes. No Autoforge, no API calls:
+
+```bash
+python retrain.py
+# Merges original training data + real outcomes → new model.json
+```
+
+Schedule it as a cron job:
+
+```bash
+# Every Sunday — model gets smarter from its own decisions
+0 3 * * 0 cd /your/app/specialist && python retrain.py
+```
+
+Autoforge is scaffolding. You remove it when the building stands. Come back only when the domain shifts fundamentally and you need to re-explore.
+
+---
+
+## How It Works
+
+```
+describe → simulate → compete → extract → deploy → retrain on reality
+```
+
+1. **You describe the domain** — "freight brokerage load quoting"
+2. **AI writes a generative simulator** — `simulate()` returns expected value: `P(outcome | features) x magnitude`
+3. **16 strategies compete** across hundreds of thousands of scenarios
+4. **Conditional principles extracted** — "when volatility > 20% and lane is new, conservative margins win"
+5. **A hypothesis-driven director** tracks what the engine is learning, retires weak principles, and steers exploration
+6. **XGBoost trained on winners** — exported as a standalone specialist with abstention
+
+The simulation is the teacher. Strategies compete against it. What consistently wins becomes your training data. You never label a single example.
 
 ---
 
 ## What You Can Train It On
 
-Anything where you can write a function that takes a scenario and a candidate decision, and returns a score. The engine has no domain knowledge — it only knows how to run tournaments and extract what wins.
+Anything where you can score a decision against a scenario.
 
 **Decision-making under uncertainty:**
 - Quote a freight load at the right margin
 - Enter a stock position given technical signals
-- Route a support ticket to the right team
 - Accept or reject a loan application
 - Bid on a programmatic ad impression
 - Triage a patient for urgency level
@@ -33,122 +116,151 @@ Anything where you can write a function that takes a scenario and a candidate de
 **Optimization with a clear objective:**
 - Pricing strategy across customer segments
 - Inventory reorder timing
-- Content recommendation ranking
 - Resource allocation across queues
 
 **Policy learning where data is expensive or slow:**
 - Clinical decision support (simulate patient outcomes)
-- Legal document routing (simulate routing accuracy)
+- Financial crime compliance (simulate detection accuracy)
 - Supply chain response to disruption scenarios
-- Hiring screening criteria
-
-If you can score a decision against a scenario, you can train a specialist.
 
 ---
 
-## How It Works
+## Three Stages
+
+**Stage 1 — Evolutionary (free)**
+16 candidate strategies per batch. Top winners mutate, cross over, and compete. Categorical specialists are preserved so the engine doesn't collapse to one average policy. No API calls.
+
+**Stage 2 — AI-directed (~$0.50/run)**
+Opus directs between batches — tests hypotheses about the domain, diagnoses what the simulator is teaching vs. gaming, retires weak principles, focuses the next batch on known gaps. Sonnet generates 16 named strategy archetypes. Haiku extracts conditional principles every 10 rounds. Every 2 batches, adversarial scenarios target the champion's weak spots.
+
+**Stage 3 — Deployed specialist (free forever)**
+The specialist runs locally. XGBoost for numerical domains, fine-tuned Qwen3-4B via MLX-LM for language domains. Retrains on real outcomes without Autoforge.
 
 ```
-1. bootstrap        describe your domain in plain English — AI writes the simulator (~$0.05)
-2. edit mission.md  set what good looks like, when to abstain, what counts as failure
-3. run overnight    16 strategies compete across hundreds of thousands of scenarios (~$0.50)
-4. export           training data, eval set, abstention threshold
-5. train + deploy   local specialist, runs forever at zero cost
+describe → Stage 1 → Stage 2 → saturated → specialist/
+ ~$0.30      free      ~$0.50     auto        forever
 ```
-
-The simulation is the teacher. You never label a single example.
 
 ---
 
-## Try It Now
+## The World Model
+
+`world_model.md` is the single steering document for the entire learning loop. Generated by bootstrap, it contains:
+
+- **Domain Understanding** — how the domain works in reality, key dynamics, failure modes
+- **Strategy Space** — what dimensions matter, what range of approaches to explore
+- **Extraction Guidance** — what principles are worth learning vs. simulation artifacts
+- **Success Criteria** — what good looks like, when to abstain, what must never happen
+- **Current Hypotheses** — what the engine is testing, what it has confirmed
+
+Every AI call in the system — the director, the archetype generator, the principle extractor, the grounding layer — reads this document. One coherent understanding drives everything.
+
+---
+
+## Hypothesis-Driven Learning
+
+The director doesn't just optimize — it tests hypotheses about the domain.
+
+After each batch, it tracks:
+- **hypotheses_tested** — what was tested this batch
+- **hypotheses_confirmed** — what the evidence supports
+- **hypotheses_open** — what to test next
+
+Confirmed hypotheses accumulate in `hypotheses.json` and update the Current Hypotheses section of `world_model.md`. The engine builds a theory of the domain, not just a set of weights.
+
+---
+
+## Self-Evolution
+
+With `--self-evolve`, the engine can improve its own simulation:
 
 ```bash
-git clone https://github.com/eyoellundberg/autoforge
-cd autoforge
-pip install -e .                          # zero hard dependencies — pure Python + stdlib
-
-# Generate a domain from a plain-English description (~$0.05)
-python run.py bootstrap FreightQuoting \
-  --description "freight brokerage load quoting, spot and contract lanes"
-
-# Edit the one control file — set what winning looks like
-open FreightQuoting/mission.md
-
-# Check the simulator is healthy before running
-python run.py validate  --domain FreightQuoting
-python run.py calibrate --domain FreightQuoting
-
-# Run the tournament (free, no API key needed)
-python run.py run --domain FreightQuoting --batches 5 --rounds 100
-
-# Monitor a live run
-python run.py tail --domain FreightQuoting
-
-# Train the local model
-python run.py train --domain FreightQuoting
+autoforge FreightQuoting "freight load quoting" --self-evolve
 ```
+
+When the director detects that `simulate()` is miscalibrated — rewarding the wrong behavior, missing real-world dynamics, or has dead parameters — it proposes a patch. Opus rewrites `simulation.py`, validates it passes all checks, and the tournament continues with the improved sim.
+
+Schema evolution works the same way: the director can add or remove parameters from `CANDIDATE_SCHEMA` when it discovers new strategic dimensions or finds dead ones.
 
 ---
 
-## The One File You Edit
+## Reality Grounding
 
-**`mission.md`** defines the job. Everything else is generated.
+With `--ground`, the engine sanity-checks the simulation against domain knowledge:
 
-```markdown
-## Job
-Quote freight loads: given lane, weight, distance, and market conditions,
-decide whether to bid and at what margin.
-
-## What good looks like
-Win rate > 40% on spot loads. Margin > 8% on contract lanes.
-Never bid below cost on lanes with fuel surcharge > 15%.
-
-## Abstain when
-Rate volatility > 30% week-over-week. New lane with < 10 historical loads.
-
-## Failure
-Booking a load at negative margin. Losing a contract lane to a competitor
-by more than 5% on 3 consecutive bids.
+```bash
+autoforge FreightQuoting "freight load quoting" --ground
 ```
 
-**`simulation.py` is the investment.** The AI can only learn what the simulator teaches. Before running overnight, verify:
+Three layers:
+1. **Anomaly detection** (pure stats, every batch) — score outliers, dead parameters, uniform scores, batch drift
+2. **Calibration audit** (Sonnet, every 3rd batch) — "are these probability distributions realistic for this domain?"
+3. **Deep-dive sampling** (Haiku, every batch) — random rounds reviewed for real-world plausibility
 
-- The right strategy type wins in each scenario class
-- Varying scenario factors changes which strategy wins
-- Score range is meaningful (not 0.99–1.01)
-- No single strategy dominates regardless of scenario
+If the calibration verdict is "miscalibrated" and `--self-evolve` is on, the engine automatically rewrites the simulation.
 
 ---
 
 ## The Simulator Contract
 
-`simulation.py` is the only file that knows what your domain is. The engine is completely agnostic — it calls these four things:
+`simulation.py` is the only file that knows what your domain is:
 
 ```python
-# Required
-CANDIDATE_SCHEMA: dict         # JSON schema for a strategy (5–15 parameters)
-METRIC_NAME: str               # e.g. "profit", "entry_utility", "routing_accuracy"
+CANDIDATE_SCHEMA: dict         # JSON schema for a strategy
+METRIC_NAME: str               # e.g. "expected_profit"
 
-def random_state() -> dict:
-    # Draw one scenario. Called once per round. Pure Python, no I/O.
-    # Must cover diverse situations — this is your training distribution.
-
-def simulate(candidate: dict, state: dict) -> float:
-    # Score a candidate strategy against a scenario. Higher = better.
-    # Must be deterministic. Called millions of times — keep it fast.
+def random_state() -> dict:    # draw one scenario
+def simulate(candidate: dict, state: dict) -> float:  # score it
 
 # Optional
-def build_context(state: dict) -> dict:
-    # Human-readable labels for principle extraction (e.g. "risk_bucket": "high")
+def build_context(state: dict) -> dict:  # labels for principle extraction
 ```
 
-A strategy is a JSON dict matching `CANDIDATE_SCHEMA`. The tournament discovers which parameterizations win across your scenario distribution — that signal becomes your training data.
+The best simulations are generative world models — `simulate()` returns expected value: `P(good_outcome | features) x magnitude`. When the simulation models the real-world outcome, the tournament discovers strategies that work for grounded reasons.
+
+---
+
+## CLI
+
+**Primary interface** — one command does everything:
+
+```bash
+autoforge Domain "description"           # create + train → specialist/
+autoforge Domain                         # status, or resume if interrupted
+autoforge Domain --eval                  # run eval scenarios
+autoforge Domain --pack                  # bundle as .zip
+autoforge Domain --import outcomes.jsonl # import real outcomes
+autoforge install pack.zip               # install a domain pack
+```
+
+**Power-user subcommands** for granular control:
+
+```bash
+autoforge run --domain D --brain --batches 8 --rounds 200
+autoforge run --domain D --brain --self-evolve --ground
+autoforge calibrate --domain D
+autoforge validate --domain D
+autoforge export --domain D
+autoforge train --domain D
+autoforge tail --domain D
+autoforge status --domain D
+autoforge bootstrap D "description" --manual
+```
+
+**Overnight unattended:**
+
+```bash
+caffeinate -i autoforge FreightQuoting \
+  "freight brokerage load quoting" \
+  --batches 20 --rounds 1000 --workers 8 \
+  > FreightQuoting/run.log 2>&1 &
+```
+
+Checkpointed after every batch — safe to interrupt and resume.
 
 ---
 
 ## Scale
-
-A single overnight run on a Mac Mini M4:
 
 | Config | Simulations |
 |---|---|
@@ -157,63 +269,7 @@ A single overnight run on a Mac Mini M4:
 | `--batches 20 --rounds 1000 --workers 8` | ~320,000 |
 | Overnight unattended (8–12 hrs) | 500K–1M+ |
 
-`--workers N` runs rounds in parallel across CPU cores. Stage 1 costs nothing — no API calls, runs as fast as your CPU.
-
----
-
-## Three Stages
-
-**Stage 1 — Evolutionary (free)**
-16 candidate strategies per batch. Top winners mutate, cross over, and compete again. Categorical specialists are preserved so the engine doesn't collapse to one average policy. No API calls. Runs as fast as your CPU.
-
-**Stage 2 — AI-directed (~$0.50/run)**
-Opus 4.6 with adaptive thinking directs between batches — diagnoses what the simulator is teaching vs. gaming, retires weak principles, and focuses the next batch on known gaps. Sonnet generates 16 named strategy archetypes per batch. Haiku extracts conditional principles every 10 rounds. Every 2 batches, the director generates adversarial scenarios targeting the champion's weak spots and injects them into the next batch.
-
-**Stage 3 — Local model (free forever)**
-Export the tournament log as training data. Numerical domains: XGBoost on `training_features.csv`. Language domains: fine-tune Qwen3-4B on Apple Silicon via MLX-LM. `python run.py train` handles both. No more API calls.
-
-```
-bootstrap → Stage 1 → Stage 2 → saturated → export → local specialist
-  ~$0.05      free      ~$0.50     free          forever
-```
-
----
-
-## Full Run
-
-```bash
-# Stage 1 — free, no API key needed
-python run.py run --domain FreightQuoting --batches 10 --rounds 150
-
-# Stage 2 — AI archetypes + director (~$0.50)
-export ANTHROPIC_API_KEY=sk-ant-...
-python run.py run --domain FreightQuoting --brain --batches 8 --rounds 150
-
-# Fully autonomous overnight run — promotes from Stage 1 to Stage 2 automatically
-python run.py run --domain FreightQuoting --auto --batches 20 --rounds 1000 --workers 8
-```
-
-Run overnight unattended:
-
-```bash
-caffeinate -i python run.py run \
-  --domain FreightQuoting \
-  --auto --batches 20 --rounds 1000 --workers 8 \
-  > FreightQuoting/run.log 2>&1 &
-
-echo "Running as PID $! — check FreightQuoting/run.log in the morning"
-```
-
-```bash
-# Morning check
-python run.py tail   --domain FreightQuoting
-python run.py status --domain FreightQuoting
-python run.py eval   --domain FreightQuoting
-python run.py export --domain FreightQuoting
-python run.py train  --domain FreightQuoting
-```
-
-Checkpointed after every batch — safe to interrupt and resume. Delete `run_checkpoint.json` to start fresh.
+`--workers N` runs rounds in parallel. Stage 1 costs nothing.
 
 ---
 
@@ -225,160 +281,103 @@ The director issues a verdict after every batch:
 |---|---|---|
 | `converging` | Score and playbook improving | Keep running |
 | `exploring` | Mixed results, still searching | Keep running |
-| `stalled` | No improvement for multiple batches | Adjust sim or prompts |
-| `reward_hacking` | Score rising but wrong behavior winning | Stop — fix simulation.py |
+| `stalled` | No improvement for multiple batches | Adjust sim |
+| `reward_hacking` | Score rising but wrong behavior winning | Fix simulation.py |
 | `needs_calibration` | Sim rewarding the wrong thing | Fix simulation.py |
-| `saturated` | Playbook full, score stable | Export and train |
+| `saturated` | Playbook full, score stable | Done — specialist generated |
 
-`saturated` is the success state. When `reward_hacking` or `needs_calibration` fires, the director prints specific fix suggestions for `simulation.py` and logs them in `thinking_log.md`.
-
----
-
-## Abstention — When Not to Act
-
-Every round logs a `score_margin` (winner minus runner-up). Low margin means even the simulation wasn't confident. After export, `training_features.csv` includes a `score_margin` column and an `uncertain` flag:
-
-```python
-ABSTAIN_THRESHOLD = 0.05  # printed by export — bottom 25% of training margins
-scores = model.predict(xgb.DMatrix(candidate_rows))
-if scores.max() - np.median(scores) < ABSTAIN_THRESHOLD:
-    return {"action": "ABSTAIN", "reason": "strategies too close — escalate to human"}
-best = candidates[int(np.argmax(scores))]
-```
-
-A specialist that knows when to escalate ships faster than one that always answers.
+`saturated` is the success state. On saturation, the engine automatically exports training data, trains XGBoost, and generates `specialist/`.
 
 ---
 
-## Stage 3: Local Model
+## Production Lifecycle
 
-**Numerical domain** (prices, rates, scores, demand signals):
-```bash
-python run.py train --domain FreightQuoting
-# Trains XGBoost on training_features.csv, saves model.json
+```
+Day 1        autoforge FreightQuoting "freight load quoting"
+             → specialist/ deployed to production
+
+Week 2       specialist retrains on real outcomes (python retrain.py)
+Week 3       specialist retrains again — getting smarter
+Month 2      still retraining weekly, no Autoforge needed
+
+Month 6      domain shifted — come back to Autoforge
+             autoforge FreightQuoting --import outcomes.jsonl
+             autoforge run --domain FreightQuoting --brain --batches 3
+             autoforge train --domain FreightQuoting
+             → specialist v2 deployed
 ```
 
-**Language domain** (text classification, routing, document scoring):
-```bash
-python run.py train --domain TicketTriage
-# Prints the exact mlx_lm.lora command for your domain
-
-mlx_lm.lora --model mlx-community/Qwen3-4B-4bit \
-             --data TicketTriage/ --train --iters 1000
-
-mlx_lm.fuse --model mlx-community/Qwen3-4B-4bit \
-             --adapter-path TicketTriage/adapters --save-path TicketTriage/fused-model
-
-ollama create ticket-triage -f - <<EOF
-FROM ./TicketTriage/fused-model
-EOF
-ollama run ticket-triage "scenario: ..."
-```
-
-```bash
-# Install training dependencies when you're ready for Stage 3
-pip install -e ".[train-numeric]"   # XGBoost — runs on any hardware
-pip install -e ".[train-language]"  # MLX-LM — requires Apple Silicon
-```
-
-Stage 3 XGBoost runs on any hardware. MLX-LM fine-tuning requires Apple Silicon.
+Autoforge gets you from zero to a working model when you have no data. Once you have real outcomes, the specialist retrains itself. Autoforge comes back when you need to re-explore.
 
 ---
 
-## Domain Packs — Share a Vertical
+## Domain Packs
 
-Domains are versioned, shareable packages:
+Share trained domains:
 
 ```bash
-python run.py pack FreightQuoting
+autoforge FreightQuoting --pack
 # → FreightQuoting-1.0.0.zip
 
-python run.py install FreightQuoting-1.0.0.zip
+autoforge install FreightQuoting-1.0.0.zip
+autoforge FreightQuoting --eval
 ```
-
-Verify before using:
-
-```bash
-python run.py eval --domain FreightQuoting
-# ✓ spot_high_demand     score  6.2  min  2.0
-# ✓ spot_low_margin      score  4.1  min  1.8
-# ✗ contract_volatile    score  1.4  min  2.6  ← weak spot
-# 2/3 passed
-```
-
-`eval` exits with code 1 on failure — use it as a CI gate.
-
----
-
-## Production Flywheel
-
-Once deployed, real decisions close the loop:
-
-```bash
-# Import real outcomes (format: {"state": {...}, "decision": {...}, "outcome": 4.2})
-python run.py import --domain FreightQuoting --file live_trades.jsonl
-
-python run.py export --domain FreightQuoting
-python run.py train  --domain FreightQuoting
-```
-
-simulate → train → deploy → import real outcomes → retrain → repeat
 
 ---
 
 ## Architecture
 
+Flat — one file per concern, no subdirectories:
+
 ```
 autoforge/
-├── run.py                  entry point
-├── commands/
-│   ├── cli.py              argparse + dispatch
-│   ├── shared.py           AI calls, director, schemas, git helpers
-│   ├── bootstrap.py        domain generation from description
-│   ├── run_cmd.py          tournament runner + checkpoint/resume
-│   └── tools.py            validate, calibrate, status, export, pack,
-│                           install, eval, import, tail, train
-├── engine_brain.py         Sonnet archetype generator + adversarial scenarios
-├── engine_extract.py       Haiku principle extractor (every 10 rounds)
-├── engine_export.py        Stage 3 training data + preferences + abstention threshold
-├── engine_tournament.py    central tournament runner (all domains share this)
-└── template/               scaffold for new domains
+├── cli.py          CLI entry point + subcommand dispatch
+├── run.py          tournament orchestration + checkpoint/resume
+├── bootstrap.py    domain generation from description
+├── validate.py     simulation health: validate, calibrate, generate evals
+├── tools.py        domain management: status, tail, pack, install, eval, import, train
+├── progress.py     pipeline progress display
+├── tournament.py   core batch runner (Stage 1 + Stage 2)
+├── brain.py        archetypes (Sonnet) + adversarial + principle extraction (Haiku)
+├── export.py       training data exporter
+├── evolve.py       simulation + schema self-evolution
+├── ground.py       reality grounding (anomaly detection, calibration audit)
+├── director.py     hypothesis-driven director (Opus)
+├── api.py          AI calls via stdlib urllib — no SDK
+├── utils.py        file helpers, ENGINE_ROOT, git
+└── template/
+    ├── simulation.py       domain template
+    ├── world_model.md      steering document template
+    └── specialist/         predict.py + retrain.py templates
 
-MyDomain/
-    ├── mission.md              what the job is, what good looks like, when to abstain  ← edit this
-    ├── simulation.py           simulate(), random_state(), build_context(), CANDIDATE_SCHEMA  ← calibrate this
-    ├── prompts/                AI-operational files (generated by bootstrap)
-    ├── pack.json               version, author, metric                                ← commit this
-    ├── evals/scenarios.jsonl   known scenarios + expected scores                      ← commit this
-    ├── playbook.jsonl          learned conditional principles                         ← commit this
-    ├── top_candidates.json     top Stage 1 winners                                    ← commit this
-    ├── training_preferences.jsonl  pairwise winner-vs-runner-up examples              (generated)
-    ├── thinking_log.md         director reasoning trail                               (do not commit)
-    ├── tournament_log.jsonl    round-by-round scores                                  (do not commit)
-    └── last_run.json           last run summary                                       (do not commit)
+Domain/
+├── simulation.py           the generative world model
+├── world_model.md          unified steering document
+├── hypotheses.json         confirmed + open hypotheses
+├── playbook.jsonl          learned conditional principles
+├── specialist/             deployable: predict.py, retrain.py, model.json, config.json
+├── pack.json               version, metric, metadata
+└── evals/scenarios.jsonl   eval scenarios
 ```
-
-The Autoforge root has zero domain knowledge. `simulation.py` is the only file that knows what your domain is.
 
 ---
 
 ## Model Configuration
 
-Built on Anthropic. Opus 4.6 with adaptive thinking for the director, Sonnet 4.6 for archetypes, Haiku 4.5 for extraction. Stage 2 calls the API directly via stdlib `urllib` — no SDK required.
+Built on Anthropic. No SDK required — calls the API via stdlib `urllib`.
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
-AUTOFORGE_AI_BACKEND=anthropic          # or: manual
 
 # Override any model (optional — defaults shown)
-AUTOFORGE_DIRECTOR_MODEL=claude-opus-4-6
-AUTOFORGE_LIBRARY_MODEL=claude-sonnet-4-6
-AUTOFORGE_EXTRACT_MODEL=claude-haiku-4-5-20251001
+AUTOFORGE_BOOTSTRAP_MODEL=claude-opus-4-6        # domain generation
+AUTOFORGE_DIRECTOR_MODEL=claude-opus-4-6         # hypothesis-driven direction
+AUTOFORGE_LIBRARY_MODEL=claude-sonnet-4-6        # archetype generation
+AUTOFORGE_EXTRACT_MODEL=claude-haiku-4-5-20251001 # principle extraction
+AUTOFORGE_EVOLVE_MODEL=claude-opus-4-6           # simulation self-evolution
+AUTOFORGE_GROUND_MODEL=claude-sonnet-4-6         # calibration audit
+AUTOFORGE_DEEP_DIVE_MODEL=claude-haiku-4-5-20251001 # deep-dive sampling
 ```
-
-`AUTOFORGE_AI_BACKEND=manual` runs without live API calls — useful for testing.
-
-OpenAI backend is available but prompts are tuned for Claude; adaptive thinking is not supported. See [issue #1](https://github.com/eyoellundberg/autoforge/issues/1).
 
 ---
 
@@ -386,12 +385,13 @@ OpenAI backend is available but prompts are tuned for Claude; adaptive thinking 
 
 | Stage | Cost | Notes |
 |---|---|---|
-| `bootstrap` | ~$0.05 | One-time per domain |
+| Bootstrap | ~$0.30 | One-time (Opus) |
 | Stage 1 | $0.00 | No API calls |
 | Stage 2 | ~$0.50 | Per run to saturation |
-| Stage 3 | $0.00 | Local compute, forever |
+| Specialist | $0.00 | Local, forever |
+| Retraining | $0.00 | XGBoost on real outcomes |
 
-Designed to run unattended on a Mac Mini M4. No GPU needed for Stage 1 or 2.
+Runs unattended on a Mac Mini M4. No GPU needed.
 
 ---
 

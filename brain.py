@@ -1,29 +1,30 @@
 """
-engine_brain.py — Generic archetype library generator for Autoforge.
+brain.py — Archetype library, adversarial scenarios, principle extraction.
 
-Any domain with a prompts/brain.md and simulation.CANDIDATE_SCHEMA gets a
-fully functional strategy library generator. Replaces hardcoded brain.py
-files in individual domains.
-
-Uses Sonnet for creative, opinionated archetype generation.
+call_library():          Generate 16 named strategy archetypes for Stage 2.
+call_adversarial():      Generate targeted scenarios for the champion's weak spots.
+extract_principles_ai(): Extract conditional principles from a tournament round.
 """
 
 import json
 import os
 import sys
 import importlib
+from collections import defaultdict
 from pathlib import Path
 
-from commands.shared import load_env, load_mission, normalize_confidence, structured_ai_call
+from api import structured_ai_call, ai_backend_available
+from utils import (
+    load_env, load_mission, load_world_model, load_hypotheses,
+    normalize_confidence, normalize_playbook_entry,
+)
 
-MODEL_LIBRARY = os.environ.get("AUTOFORGE_LIBRARY_MODEL", "claude-sonnet-4-6")
+MODEL_LIBRARY  = os.environ.get("AUTOFORGE_LIBRARY_MODEL", "claude-sonnet-4-6")
+MODEL_EXTRACT  = os.environ.get("AUTOFORGE_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
 
 
 def _sanitize_for_api(schema: dict) -> dict:
-    """
-    Strip constraints unsupported by Anthropic's structured output from a JSON schema.
-    Currently: 'integer' type does not allow minimum/maximum.
-    """
+    """Strip constraints unsupported by Anthropic's structured output."""
     import copy
     schema = copy.deepcopy(schema)
     props = schema.get("properties", {})
@@ -61,7 +62,6 @@ def build_library_schema(candidate_schema: dict) -> dict:
 
 
 def _load_champion(domain_path: Path) -> dict:
-    """Load the champion archetype from the prior batch, if one exists."""
     p = domain_path / "champion_archetype.json"
     if p.exists():
         try:
@@ -72,7 +72,6 @@ def _load_champion(domain_path: Path) -> dict:
 
 
 def _load_reference_strategies(domain_path: Path) -> list:
-    """Load current champion/top candidates for eval feedback."""
     strategies = []
     seen = set()
 
@@ -102,9 +101,7 @@ def _load_reference_strategies(domain_path: Path) -> list:
 
 
 def _load_eval_feedback(domain_path: Path) -> list[str]:
-    """
-    Summarize current eval failures so the next library can target them.
-    """
+    """Summarize current eval failures so the next library can target them."""
     evals_path = domain_path / "evals" / "scenarios.jsonl"
     if not evals_path.exists():
         return []
@@ -167,14 +164,14 @@ def generate_library_prompt(playbook: list, hints: list, domain_path: Path) -> s
     """Build the user-turn prompt for library generation."""
     champion = _load_champion(domain_path)
     lines = []
-    mission_text = load_mission(domain_path)
 
-    if mission_text:
-        lines += [
-            "MISSION:",
-            mission_text,
-            "",
-        ]
+    world_model = load_world_model(domain_path)
+    if world_model:
+        lines += ["WORLD MODEL:", world_model, ""]
+    else:
+        mission_text = load_mission(domain_path)
+        if mission_text:
+            lines += ["MISSION:", mission_text, ""]
 
     if champion:
         lines += [
@@ -217,9 +214,17 @@ def generate_library_prompt(playbook: list, hints: list, domain_path: Path) -> s
             lines.append(f"  - {h}")
         lines.append("")
 
-    brain_md = domain_path / "prompts" / "brain.md"
-    if brain_md.exists():
-        lines.append(brain_md.read_text().strip())
+    hypotheses = load_hypotheses(domain_path)
+    if hypotheses.get("open"):
+        lines.append("OPEN HYPOTHESES TO TEST (design archetypes that test these):")
+        for h in hypotheses["open"]:
+            lines.append(f"  - {h}")
+        lines.append("")
+    if hypotheses.get("confirmed"):
+        lines.append("CONFIRMED HYPOTHESES (build on these):")
+        for h in hypotheses["confirmed"][-5:]:
+            lines.append(f"  - {h}")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -328,13 +333,7 @@ def call_library(
     candidate_schema: dict,
 ) -> list:
     """
-    Call Sonnet once to generate a library of strategy archetypes.
-
-    playbook:         current playbook list
-    hints:            director hints from prior batch
-    domain_path:      path to domain folder (reads prompts/brain.md + champion)
-    candidate_schema: domain's CANDIDATE_SCHEMA (what a strategy looks like)
-
+    Call Sonnet once to generate a library of 16 strategy archetypes.
     Returns list of archetype dicts: [{name, philosophy, best_for, strategy}, ...]
     """
     load_env(domain_path)
@@ -369,3 +368,143 @@ def call_library(
             raise RuntimeError(f"Library generation failed: {e}") from e
 
     return []
+
+
+# ── Principle extraction (Haiku, every 10 rounds) ─────────────────────────────
+
+_EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "principles": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic":         {"type": "string"},
+                    "context":       {"type": "string"},
+                    "principle":     {"type": "string"},
+                    "condition":     {"type": ["string", "null"]},
+                    "confidence":    {"type": "number"},
+                    "rounds_tested": {"type": "integer"},
+                },
+                "required": ["topic", "context", "principle", "condition",
+                             "confidence", "rounds_tested"],
+                "additionalProperties": False,
+            }
+        }
+    },
+    "required": ["principles"],
+    "additionalProperties": False,
+}
+
+
+def _merge_principles(new_principles: list, existing: list) -> list:
+    """Merge new into existing playbook. Max 2 per topic, max 60 total."""
+    by_topic: dict = defaultdict(list)
+    for p in existing:
+        p = normalize_playbook_entry(p)
+        by_topic[p.get("topic", p["principle"][:30])].append(p)
+    for p in new_principles:
+        p = normalize_playbook_entry(p)
+        by_topic[p["topic"]].append(p)
+
+    kept = []
+    for entries in by_topic.values():
+        entries.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+        kept.extend(entries[:2])
+
+    kept.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+    return kept[:60]
+
+
+def extract_principles_ai(
+    winner: dict,
+    losers: list,
+    context: dict,
+    score: float,
+    generation: int,
+    existing: list,
+    domain_path: Path = None,
+) -> list:
+    """
+    Call Haiku to extract 0-2 principles from a tournament round.
+    Falls back to returning existing playbook unchanged on any error.
+    """
+    if domain_path is None:
+        domain_path = Path(__file__).parent
+
+    load_env(domain_path)
+
+    rt_path = domain_path / "retired_topics.json"
+    retired = json.loads(rt_path.read_text()) if rt_path.exists() else []
+
+    world_model = load_world_model(domain_path)
+    if world_model:
+        system_prompt = (
+            "You are extracting conditional principles from tournament results.\n\n"
+            "WORLD MODEL:\n" + world_model
+        )
+    else:
+        extract_prompt_path = domain_path / "prompts" / "extract.md"
+        if not extract_prompt_path.exists():
+            return existing
+        system_prompt = extract_prompt_path.read_text().strip()
+        mission_text = load_mission(domain_path)
+        if mission_text:
+            system_prompt = "MISSION:\n" + mission_text + "\n\n" + system_prompt
+
+    system_prompt = system_prompt.replace(
+        "{{RETIRED_TOPICS}}",
+        json.dumps(retired) if retired else "(none yet)"
+    )
+
+    def compact(strategy: dict) -> str:
+        return json.dumps(strategy, separators=(",", ":"))
+
+    loser_lines   = "\n".join(f"LOSER {i+1}: {compact(l)}" for i, l in enumerate(losers[:3]))
+    context_lines = "\n".join(f"  {k}: {v}" for k, v in context.items())
+    playbook_summary = "\n".join(
+        f"  [{e.get('topic')}] {e.get('principle', '')[:70]}  (conf {normalize_confidence(e.get('confidence', 0)):.0%})"
+        for e in existing
+    ) or "  (empty)"
+
+    user_content = f"""ROUND {generation}
+
+WINNER: {compact(winner)}
+{loser_lines}
+
+SCORE: {score}
+
+CONTEXT:
+{context_lines}
+
+EXISTING PLAYBOOK:
+{playbook_summary}
+"""
+
+    if not ai_backend_available():
+        return existing
+
+    for attempt in range(2):
+        try:
+            data = structured_ai_call(
+                task_name="extract",
+                domain_path=domain_path,
+                model=MODEL_EXTRACT,
+                max_tokens=512,
+                system_prompt=system_prompt,
+                user_prompt=user_content,
+                schema=_EXTRACT_SCHEMA,
+                metadata={"generation": generation, "score": score},
+            )
+            new_principles = data.get("principles", [])
+            new_principles = [p for p in new_principles if p["topic"] not in retired]
+            return _merge_principles(new_principles, existing)
+
+        except Exception as e:
+            if attempt == 0:
+                continue
+            print(f"  [extract warning] Haiku call failed: {e}")
+            return existing
+
+    return existing

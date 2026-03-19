@@ -16,15 +16,15 @@ __pycache__/
 .env
 */.env
 
-# Domains — live outside the engine repo
-StockTiming/
-
 # Run artifacts — do not commit
 */tournament_log.jsonl
 */thinking_log.md
 */reasoning_log.jsonl
 */training_data.jsonl
 */last_run.json
+*/grounding_log.jsonl
+*/evolution_log.jsonl
+*/specialist/outcomes.jsonl
 
 # Commit these — they are the learned state
 # playbook.jsonl

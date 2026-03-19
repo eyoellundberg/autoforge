@@ -6,11 +6,10 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-train-numeric  = ["xgboost", "pandas", "numpy"]
-train-language = ["mlx-lm"]
+train-numeric = ["xgboost", "pandas", "numpy"]
 
 [project.scripts]
-autoforge = "run:main"
+autoforge = "cli:main"
 
 [build-system]
 requires = ["hatchling"]

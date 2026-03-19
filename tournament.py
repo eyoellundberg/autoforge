@@ -1,17 +1,17 @@
 """
-engine_tournament.py — Central tournament engine for all Autoforge domains.
+tournament.py — Core tournament engine.
 
 Domains expose:
     simulate(candidate, state) -> float       required
     random_state() -> dict                    required
     CANDIDATE_SCHEMA: dict                    required
     METRIC_NAME: str                          required
-    build_context(state) -> dict              optional  (defaults to full state dict)
-    prepare_state(state) -> dict              optional  (expensive per-scenario prep, called once)
-    is_event(state) -> bool                   optional  (event/nonevent win split)
+    build_context(state) -> dict              optional
+    prepare_state(state) -> dict              optional
+    is_event(state) -> bool                   optional
 
 Usage:
-    from engine_tournament import run_batch
+    from tournament import run_batch
     result = run_batch(domain_path, n_rounds=200, use_brain=True, workers=4)
 """
 
@@ -23,12 +23,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from commands.shared import normalize_playbook_entry
+from utils import normalize_playbook_entry
 
 ENGINE_ROOT = Path(__file__).parent
 
-# Module-level simulation reference — set by run_batch (single process)
-# and by _init_worker (each worker process in parallel mode)
 _SIM = None
 
 
@@ -68,12 +66,7 @@ def _save_playbook(domain_path: Path, playbook: list):
 
 
 def _context_tags(context: dict) -> list[str]:
-    """
-    Extract coarse categorical tags from a context dict.
-
-    Domains can expose bucketed fields in build_context() to help the engine
-    preserve specialists instead of converging only on one safe generalist.
-    """
+    """Extract coarse categorical tags from a context dict."""
     tags = []
     for key, value in context.items():
         if isinstance(value, bool):
@@ -92,9 +85,7 @@ def _select_top_candidates(
 ) -> list:
     """
     Preserve both overall winners and categorical specialists.
-
-    This helps Stage 1 keep breakout experts, pullback experts, risk-off
-    experts, etc., instead of only the safest average performer.
+    Prevents the engine from collapsing to one average performer.
     """
     selected = []
     selected_names = set()
@@ -102,11 +93,7 @@ def _select_top_candidates(
     def add_candidate(name: str, score: int, *, specialist_for: str | None = None, support: int | None = None):
         if name in selected_names or name not in candidate_strategies:
             return
-        row = {
-            "name": name,
-            "strategy": candidate_strategies[name],
-            "wins": score,
-        }
+        row = {"name": name, "strategy": candidate_strategies[name], "wins": score}
         if specialist_for:
             row["specialist_for"] = specialist_for
         if support is not None:
@@ -260,14 +247,12 @@ def run_batch(
     domain_path = Path(domain_path)
     os.chdir(domain_path)
 
-    # Load the domain's simulation module fresh
     if str(domain_path) not in sys.path:
         sys.path.insert(0, str(domain_path))
     if "simulation" in sys.modules:
         del sys.modules["simulation"]
     _SIM = importlib.import_module("simulation")
 
-    # Optional domain hooks
     build_context = getattr(_SIM, "build_context", None) or (lambda s: dict(s))
     is_event      = getattr(_SIM, "is_event", None)
 
@@ -277,7 +262,7 @@ def run_batch(
     # ── Stage 2: generate archetype library via Sonnet ────────────────────────
     archetypes = []
     if use_brain:
-        from engine_brain import call_library
+        from brain import call_library
         archetypes = call_library(
             playbook=playbook,
             hints=hints,
@@ -292,7 +277,6 @@ def run_batch(
         stage1_candidates = _generate_procedural_candidates(domain_path, n=16)
         stage1_names      = [f"procedural_{j}" for j in range(len(stage1_candidates))]
 
-    # Determine candidates for this batch
     if archetypes:
         candidates      = [a["strategy"] for a in archetypes]
         candidate_names = [a["name"]     for a in archetypes]
@@ -300,7 +284,7 @@ def run_batch(
         candidates      = stage1_candidates
         candidate_names = stage1_names
 
-    # ── Generate all states and contexts upfront ──────────────────────────────
+    # ── Generate all states and contexts ─────────────────────────────────────
     scores                   = []
     archetype_wins           = {}
     archetype_wins_event     = {}
@@ -332,8 +316,8 @@ def run_batch(
     else:
         all_scored = [_score_round(a) for a in score_args]
 
-    # ── Process results sequentially ─────────────────────────────────────────
-    from engine_extract import extract_principles_ai
+    # ── Process results ───────────────────────────────────────────────────────
+    from brain import extract_principles_ai
 
     with open(log_path, "a") as log_file:
         for i, (scored, state, context) in enumerate(zip(all_scored, states, contexts)):
@@ -364,7 +348,6 @@ def run_batch(
             }
             log_file.write(json.dumps(entry) + "\n")
 
-            # Track win counts
             if winner_name not in archetype_wins:
                 archetype_wins[winner_name]          = 0
                 archetype_wins_event[winner_name]    = 0
@@ -375,7 +358,6 @@ def run_batch(
             else:
                 archetype_wins_nonevent[winner_name] += 1
 
-            # Track context distribution
             for k, v in context.items():
                 key = f"{k}:{v}"
                 context_mix[key] = context_mix.get(key, 0) + 1
@@ -384,8 +366,7 @@ def run_batch(
                 tag_totals[tag] += 1
                 tag_candidate_wins[tag][winner_name] += 1
 
-            # Extract principles every 10 rounds
-            if round_num % 10 == 0:
+            if use_brain and round_num % 10 == 0:
                 playbook = extract_principles_ai(
                     winner=winner,
                     losers=losers,
