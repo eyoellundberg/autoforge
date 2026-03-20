@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 from api import structured_ai_call
-from utils import load_env, load_world_model
+from utils import load_env, load_world_model, load_jsonl
 
 MODEL_CALIBRATION = os.environ.get("AUTOFORGE_GROUND_MODEL", "claude-sonnet-4-6")
 MODEL_DEEP_DIVE   = os.environ.get("AUTOFORGE_DEEP_DIVE_MODEL", "claude-haiku-4-5-20251001")
@@ -97,17 +97,7 @@ DEEP_DIVE_SCHEMA = {
 
 
 def _load_recent_rounds(domain_path: Path, last_n: int = 0) -> list[dict]:
-    log_path = domain_path / "tournament_log.jsonl"
-    if not log_path.exists():
-        return []
-    rounds = []
-    for line in log_path.read_text().splitlines():
-        if not line.strip():
-            continue
-        try:
-            rounds.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+    rounds = load_jsonl(domain_path / "tournament_log.jsonl")
     if last_n > 0:
         return rounds[-last_n:]
     return rounds

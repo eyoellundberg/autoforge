@@ -14,10 +14,12 @@ Flow:
 import json
 import os
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 
 from api import structured_ai_call
+from validate import validate_domain
 from utils import ENGINE_ROOT, load_world_model, load_env
 
 MODEL_EVOLVE = os.environ.get("AUTOFORGE_EVOLVE_MODEL", "claude-opus-4-6")
@@ -44,6 +46,41 @@ def _log_evolution(domain_path: Path, event: str, summary: str, errors: list):
     log_path = domain_path / "evolution_log.jsonl"
     with open(log_path, "a") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+def _apply_and_validate(domain_path: Path, sim_path: Path, proposed: str,
+                        changes_summary: str, event_prefix: str) -> bool:
+    """
+    Shared backup-validate-restore pattern for simulation evolution.
+    Writes proposed code, validates, restores backup on failure.
+    Returns True if applied, False if rejected.
+    """
+    backup_path = sim_path.with_suffix(".py.backup")
+    shutil.copy2(sim_path, backup_path)
+    sim_path.write_text(proposed)
+
+    if "simulation" in sys.modules:
+        del sys.modules["simulation"]
+
+    _ok, _warnings, errors = validate_domain(domain_path)
+
+    if errors:
+        shutil.copy2(backup_path, sim_path)
+        backup_path.unlink(missing_ok=True)
+        if "simulation" in sys.modules:
+            del sys.modules["simulation"]
+        print(f"  [evolve] {event_prefix} REJECTED — validation errors:")
+        for e in errors:
+            print(f"    {e}")
+        _log_evolution(domain_path, f"{event_prefix}_rejected", changes_summary, errors)
+        return False
+
+    backup_path.unlink(missing_ok=True)
+    if "simulation" in sys.modules:
+        del sys.modules["simulation"]
+    print(f"  [evolve] {event_prefix} APPLIED: {changes_summary}")
+    _log_evolution(domain_path, f"{event_prefix}_applied", changes_summary, [])
+    return True
 
 
 def evolve_simulation(
@@ -111,37 +148,12 @@ Return the complete file content in the simulation_py field.
         _log_evolution(domain_path, "sim_patch_error", str(e), [])
         return False
 
-    proposed = data["simulation_py"]
-    changes_summary = data["changes_summary"]
-
-    backup_path = sim_path.with_suffix(".py.backup")
-    shutil.copy2(sim_path, backup_path)
-    sim_path.write_text(proposed)
-
-    import sys
-    if "simulation" in sys.modules:
-        del sys.modules["simulation"]
-
-    from tools import validate_domain
-    ok, warnings, errors = validate_domain(domain_path)
-
-    if errors:
-        shutil.copy2(backup_path, sim_path)
-        backup_path.unlink(missing_ok=True)
-        if "simulation" in sys.modules:
-            del sys.modules["simulation"]
-        print(f"  [evolve] simulation patch REJECTED — validation errors:")
-        for e in errors:
-            print(f"    {e}")
-        _log_evolution(domain_path, "sim_patch_rejected", changes_summary, errors)
-        return False
-
-    backup_path.unlink(missing_ok=True)
-    if "simulation" in sys.modules:
-        del sys.modules["simulation"]
-    print(f"  [evolve] simulation patch APPLIED: {changes_summary}")
-    _log_evolution(domain_path, "sim_patch_applied", changes_summary, [])
-    return True
+    return _apply_and_validate(
+        domain_path, sim_path,
+        proposed=data["simulation_py"],
+        changes_summary=data["changes_summary"],
+        event_prefix="sim_patch",
+    )
 
 
 def evolve_schema(
@@ -219,34 +231,9 @@ Modify CANDIDATE_SCHEMA and simulate() accordingly. Return the complete file.
         _log_evolution(domain_path, "schema_evolve_error", str(e), [])
         return False
 
-    proposed = data["simulation_py"]
-    changes_summary = data["changes_summary"]
-
-    backup_path = sim_path.with_suffix(".py.backup")
-    shutil.copy2(sim_path, backup_path)
-    sim_path.write_text(proposed)
-
-    import sys
-    if "simulation" in sys.modules:
-        del sys.modules["simulation"]
-
-    from tools import validate_domain
-    ok, warnings, errors = validate_domain(domain_path)
-
-    if errors:
-        shutil.copy2(backup_path, sim_path)
-        backup_path.unlink(missing_ok=True)
-        if "simulation" in sys.modules:
-            del sys.modules["simulation"]
-        print(f"  [evolve] schema evolution REJECTED — validation errors:")
-        for e in errors:
-            print(f"    {e}")
-        _log_evolution(domain_path, "schema_evolve_rejected", changes_summary, errors)
-        return False
-
-    backup_path.unlink(missing_ok=True)
-    if "simulation" in sys.modules:
-        del sys.modules["simulation"]
-    print(f"  [evolve] schema evolution APPLIED: {changes_summary}")
-    _log_evolution(domain_path, "schema_evolve_applied", changes_summary, [])
-    return True
+    return _apply_and_validate(
+        domain_path, sim_path,
+        proposed=data["simulation_py"],
+        changes_summary=data["changes_summary"],
+        event_prefix="schema_evolve",
+    )

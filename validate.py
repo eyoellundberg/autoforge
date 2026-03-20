@@ -9,7 +9,7 @@ import importlib
 from pathlib import Path
 
 from api import structured_ai_call
-from utils import ENGINE_ROOT, load_env, load_sim, load_world_model
+from utils import ENGINE_ROOT, load_env, load_sim, load_world_model, random_candidate_from_schema, midpoint_candidate_from_schema
 
 
 # ── Eval generation ───────────────────────────────────────────────────────────
@@ -152,7 +152,6 @@ def validate_domain(domain_path) -> tuple:
     Validate a domain's simulation.py. Returns (ok, warnings, errors) lists.
     Safe to call from other commands — does not sys.exit.
     """
-    import random as _random
     import collections as _col
     domain_path = Path(domain_path)
 
@@ -201,19 +200,7 @@ def validate_domain(domain_path) -> tuple:
         errors.append(f"random_state() raised: {e}")
 
     try:
-        candidate = {}
-        for key, spec in schema.get("properties", {}).items():
-            t = spec.get("type")
-            if t == "number":
-                lo, hi = spec.get("minimum", 0.0), spec.get("maximum", 1.0)
-                candidate[key] = (lo + hi) / 2
-            elif t == "integer":
-                lo, hi = spec.get("minimum", 0), spec.get("maximum", 10)
-                candidate[key] = (lo + hi) // 2
-            elif "enum" in spec:
-                candidate[key] = spec["enum"][0]
-            else:
-                candidate[key] = None
+        candidate = midpoint_candidate_from_schema(schema)
 
         state = sim.random_state()
         score = sim.simulate(candidate, state)
@@ -236,20 +223,7 @@ def validate_domain(domain_path) -> tuple:
         pass
 
     try:
-        _candidates = []
-        for _ in range(4):
-            c = {}
-            for key, spec in schema.get("properties", {}).items():
-                t = spec.get("type")
-                if t == "number":
-                    c[key] = _random.uniform(spec.get("minimum", 0.0), spec.get("maximum", 1.0))
-                elif t == "integer":
-                    c[key] = _random.randint(spec.get("minimum", 0), spec.get("maximum", 10))
-                elif "enum" in spec:
-                    c[key] = _random.choice(spec["enum"])
-                else:
-                    c[key] = None
-            _candidates.append(c)
+        _candidates = [random_candidate_from_schema(schema) for _ in range(4)]
         win_counts = _col.Counter()
         for _ in range(50):
             state = sim.random_state()
@@ -317,7 +291,6 @@ def cmd_calibrate(args):
     """Show scenario distributions, score stats, and dominance check."""
     import statistics
     import collections
-    import random as _random
 
     domain_path = ENGINE_ROOT / args.domain
     if not domain_path.exists():
@@ -335,22 +308,11 @@ def cmd_calibrate(args):
 
     states = [sim.random_state() for _ in range(n)]
 
-    schema_props = sim.CANDIDATE_SCHEMA.get("properties", {})
+    schema = sim.CANDIDATE_SCHEMA
+    schema_props = schema.get("properties", {})
 
     def random_candidate():
-        c = {}
-        for key, spec in schema_props.items():
-            if spec.get("type") == "number":
-                lo, hi = spec.get("minimum", 0.0), spec.get("maximum", 1.0)
-                c[key] = _random.uniform(lo, hi)
-            elif spec.get("type") == "integer":
-                lo, hi = spec.get("minimum", 0), spec.get("maximum", 10)
-                c[key] = _random.randint(lo, hi)
-            elif "enum" in spec:
-                c[key] = _random.choice(spec["enum"])
-            else:
-                c[key] = None
-        return c
+        return random_candidate_from_schema(schema)
 
     def degenerate_candidates():
         defs = []

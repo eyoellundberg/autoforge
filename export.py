@@ -12,7 +12,7 @@ import csv
 import statistics
 from pathlib import Path
 
-from utils import load_mission, load_world_model, normalize_confidence
+from utils import load_mission, load_world_model, normalize_confidence, load_jsonl
 
 
 _NON_SCORE_KEYS = {"round", "winner", "state", "archetype", "metric", "score_margin", "contenders"}
@@ -87,17 +87,10 @@ def export_training_data(domain_path: Path):
         print("Run some batches first before exporting.")
         return
 
-    raw_lines = [l.strip() for l in log_path.read_text().splitlines() if l.strip()]
-    if not raw_lines:
+    entries = load_jsonl(log_path)
+    if not entries:
         print("tournament_log.jsonl is empty — nothing to export.")
         return
-
-    entries = []
-    for line in raw_lines:
-        try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
 
     total_rounds = len(entries)
 

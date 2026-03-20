@@ -200,6 +200,61 @@ def append_thinking_log(log_path: Path, batch_num: int, result: dict, analysis: 
         f.write(section + "\n")
 
 
+def load_jsonl(path: Path, *, skip_comments: bool = False) -> list[dict]:
+    """Load a JSONL file into a list of dicts, skipping blanks and bad lines."""
+    if not path.exists():
+        return []
+    items = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if skip_comments and line.startswith("#"):
+            continue
+        try:
+            items.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return items
+
+
+def random_candidate_from_schema(schema: dict) -> dict:
+    """Generate a random candidate dict from a CANDIDATE_SCHEMA."""
+    import random as _random
+    c = {}
+    for key, spec in schema.get("properties", {}).items():
+        t = spec.get("type")
+        if t == "number":
+            lo, hi = spec.get("minimum", 0.0), spec.get("maximum", 1.0)
+            c[key] = round(_random.uniform(lo, hi), 4)
+        elif t == "integer":
+            lo, hi = spec.get("minimum", 0), spec.get("maximum", 10)
+            c[key] = _random.randint(lo, hi)
+        elif "enum" in spec:
+            c[key] = _random.choice(spec["enum"])
+        else:
+            c[key] = None
+    return c
+
+
+def midpoint_candidate_from_schema(schema: dict) -> dict:
+    """Generate a midpoint candidate dict from a CANDIDATE_SCHEMA."""
+    c = {}
+    for key, spec in schema.get("properties", {}).items():
+        t = spec.get("type")
+        if t == "number":
+            lo, hi = spec.get("minimum", 0.0), spec.get("maximum", 1.0)
+            c[key] = (lo + hi) / 2
+        elif t == "integer":
+            lo, hi = spec.get("minimum", 0), spec.get("maximum", 10)
+            c[key] = (lo + hi) // 2
+        elif "enum" in spec:
+            c[key] = spec["enum"][0]
+        else:
+            c[key] = None
+    return c
+
+
 def git_commit_batch(domain: str, domain_path: Path, global_batch: int, result: dict, analysis: dict):
     """
     Auto-commit domain state after each batch. Silently skips if git unavailable.

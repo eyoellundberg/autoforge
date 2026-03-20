@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from utils import ENGINE_ROOT, load_env, load_sim, normalize_confidence
+from utils import ENGINE_ROOT, load_env, load_sim, normalize_confidence, load_jsonl
 
 
 def cmd_status(args):
@@ -280,16 +280,7 @@ def cmd_eval(args):
         print("No champion_archetype.json or top_candidates.json — run some batches first.")
         sys.exit(1)
 
-    scenarios = []
-    for line in evals_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        try:
-            scenarios.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-
+    scenarios = load_jsonl(evals_path, skip_comments=True)
     if not scenarios:
         print("evals/scenarios.jsonl is empty or has no valid JSON lines.")
         sys.exit(1)
@@ -381,6 +372,80 @@ def _generate_specialist(domain_path: Path, domain_name: str, domain_type: str,
     return spec_dir
 
 
+def _train_xgboost(domain_path: Path, domain_name: str, *, verbose: bool = False):
+    """
+    Shared XGBoost training logic: train model, compute R², detect columns,
+    generate specialist/. Returns (r2, n_examples) or None on failure.
+    """
+    import importlib
+
+    try:
+        import xgboost as xgb
+        import pandas as pd
+        import numpy as np
+    except ImportError as e:
+        print(f"  XGBoost not installed — run: pip install xgboost pandas numpy")
+        return None
+
+    csv_path = domain_path / "training_features.csv"
+    if not csv_path.exists():
+        return None
+
+    df = pd.read_csv(csv_path)
+    feature_cols = [c for c in df.columns if c not in ("score", "score_margin", "uncertain")]
+    X, y = df[feature_cols].values, df["score"].values
+
+    dtrain = xgb.DMatrix(X, label=y, feature_names=feature_cols)
+    params = {"max_depth": 4, "eta": 0.1, "objective": "reg:squarederror", "verbosity": 0}
+    train_kwargs = {}
+    if verbose:
+        train_kwargs = {"evals": [(dtrain, "train")], "verbose_eval": 50}
+    model = xgb.train(params, dtrain, num_boost_round=200, **train_kwargs)
+    model.save_model(str(domain_path / "model.json"))
+
+    preds = model.predict(dtrain)
+    ss_res = float(np.sum((y - preds) ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+    # Detect state vs param columns
+    state_keys, param_keys = feature_cols, []
+    try:
+        sys.path.insert(0, str(domain_path))
+        sim = importlib.import_module("simulation")
+        schema_props = list(getattr(sim, "CANDIDATE_SCHEMA", {}).get("properties", {}).keys())
+        param_keys = [c for c in feature_cols if c in schema_props]
+        state_keys = [c for c in feature_cols if c not in schema_props]
+        sys.path.pop(0)
+        if "simulation" in sys.modules:
+            del sys.modules["simulation"]
+    except Exception:
+        pass
+
+    param_ranges = {}
+    for p in param_keys:
+        if p in df.columns:
+            col = pd.to_numeric(df[p], errors="coerce").dropna()
+            if len(col) > 0:
+                param_ranges[p] = [float(col.min()), float(col.max())]
+
+    abstain_threshold = 0.0
+    threshold_path = domain_path / "abstain_threshold.json"
+    if threshold_path.exists():
+        try:
+            abstain_threshold = json.loads(threshold_path.read_text()).get("threshold", 0.0)
+        except Exception:
+            pass
+
+    _generate_specialist(
+        domain_path, domain_name, "numerical",
+        feature_cols, state_keys, param_keys,
+        param_ranges, abstain_threshold, r2, len(y),
+    )
+
+    return r2, len(y)
+
+
 def cmd_train(args):
     """Train a Stage 3 model from exported training data."""
     domain_path = ENGINE_ROOT / args.domain
@@ -403,72 +468,13 @@ def cmd_train(args):
             print(f"No training_features.csv — run: autoforge export --domain {args.domain}")
             sys.exit(1)
 
-        try:
-            import xgboost as xgb
-            import pandas as pd
-            import numpy as np
-        except ImportError as e:
-            print(f"Missing package: {e}")
-            print("Install with: pip install xgboost pandas numpy")
-            sys.exit(1)
-
         print(f"Training XGBoost on {csv_path.name}...")
-        df = pd.read_csv(csv_path)
-        feature_cols = [c for c in df.columns if c not in ("score", "score_margin", "uncertain")]
-        X = df[feature_cols].values
-        y = df["score"].values
+        result = _train_xgboost(domain_path, args.domain, verbose=True)
+        if result is None:
+            sys.exit(1)
+        r2, n_examples = result
 
-        dtrain = xgb.DMatrix(X, label=y, feature_names=feature_cols)
-        params  = {"max_depth": 4, "eta": 0.1, "objective": "reg:squarederror", "verbosity": 0}
-        model   = xgb.train(params, dtrain, num_boost_round=200,
-                            evals=[(dtrain, "train")], verbose_eval=50)
-
-        model_path = domain_path / "model.json"
-        model.save_model(str(model_path))
-
-        preds  = model.predict(dtrain)
-        ss_res = float(np.sum((y - preds) ** 2))
-        ss_tot = float(np.sum((y - y.mean()) ** 2))
-        r2     = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
-
-        print(f"\nR²: {r2:.3f}  ({len(y)} examples, {len(feature_cols)} features)")
-
-        state_keys, param_keys = [], []
-        try:
-            import importlib
-            sys.path.insert(0, str(domain_path))
-            sim = importlib.import_module("simulation")
-            schema_props = list(getattr(sim, "CANDIDATE_SCHEMA", {}).get("properties", {}).keys())
-            param_keys = [c for c in feature_cols if c in schema_props]
-            state_keys = [c for c in feature_cols if c not in schema_props]
-            sys.path.pop(0)
-            if "simulation" in sys.modules:
-                del sys.modules["simulation"]
-        except Exception:
-            state_keys = feature_cols
-            param_keys = []
-
-        param_ranges = {}
-        for p in param_keys:
-            if p in df.columns:
-                col = pd.to_numeric(df[p], errors="coerce").dropna()
-                if len(col) > 0:
-                    param_ranges[p] = [float(col.min()), float(col.max())]
-
-        abstain_threshold = 0.0
-        threshold_path = domain_path / "abstain_threshold.json"
-        if threshold_path.exists():
-            try:
-                abstain_threshold = json.loads(threshold_path.read_text()).get("threshold", 0.0)
-            except Exception:
-                pass
-
-        _generate_specialist(
-            domain_path, args.domain, domain_type,
-            feature_cols, state_keys, param_keys,
-            param_ranges, abstain_threshold, r2, len(y),
-        )
-
+        print(f"\nR²: {r2:.3f}  ({n_examples} examples)")
         print(f"\nDeployable:  {args.domain}/specialist/")
         print(f"  predict.py   — from specialist.predict import predict, record")
         print(f"  retrain.py   — python retrain.py  (retrains on real outcomes)")

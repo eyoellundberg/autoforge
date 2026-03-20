@@ -28,71 +28,15 @@ from director import call_director
 
 def _auto_train_numerical(domain_path, domain_name):
     """Train XGBoost + generate specialist/ automatically on saturation."""
-    try:
-        import xgboost as xgb
-        import pandas as pd
-        import numpy as np
-    except ImportError:
-        print("  XGBoost not installed — run: pip install xgboost pandas numpy")
-        print(f"  Then: autoforge train --domain {domain_name}")
+    from tools import _train_xgboost
+
+    result = _train_xgboost(domain_path, domain_name)
+    if result is None:
+        print(f"  Run manually: autoforge train --domain {domain_name}")
         return
 
-    csv_path = domain_path / "training_features.csv"
-    if not csv_path.exists():
-        return
-
-    df = pd.read_csv(csv_path)
-    feature_cols = [c for c in df.columns if c not in ("score", "score_margin", "uncertain")]
-    X, y = df[feature_cols].values, df["score"].values
-
-    dtrain = xgb.DMatrix(X, label=y, feature_names=feature_cols)
-    params = {"max_depth": 4, "eta": 0.1, "objective": "reg:squarederror", "verbosity": 0}
-    model = xgb.train(params, dtrain, num_boost_round=200)
-    model.save_model(str(domain_path / "model.json"))
-
-    preds = model.predict(dtrain)
-    ss_res = float(np.sum((y - preds) ** 2))
-    ss_tot = float(np.sum((y - y.mean()) ** 2))
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
-
-    # Detect state vs param columns
-    state_keys, param_keys = feature_cols, []
-    try:
-        import importlib
-        sys.path.insert(0, str(domain_path))
-        sim = importlib.import_module("simulation")
-        schema_props = list(getattr(sim, "CANDIDATE_SCHEMA", {}).get("properties", {}).keys())
-        param_keys = [c for c in feature_cols if c in schema_props]
-        state_keys = [c for c in feature_cols if c not in schema_props]
-        sys.path.pop(0)
-        if "simulation" in sys.modules:
-            del sys.modules["simulation"]
-    except Exception:
-        pass
-
-    param_ranges = {}
-    for p in param_keys:
-        if p in df.columns:
-            col = pd.to_numeric(df[p], errors="coerce").dropna()
-            if len(col) > 0:
-                param_ranges[p] = [float(col.min()), float(col.max())]
-
-    abstain_threshold = 0.0
-    threshold_path = domain_path / "abstain_threshold.json"
-    if threshold_path.exists():
-        try:
-            abstain_threshold = json.loads(threshold_path.read_text()).get("threshold", 0.0)
-        except Exception:
-            pass
-
-    from tools import _generate_specialist
-    _generate_specialist(
-        domain_path, domain_name, "numerical",
-        feature_cols, state_keys, param_keys,
-        param_ranges, abstain_threshold, r2, len(y),
-    )
-
-    print(f"\nR²: {r2:.3f}  ({len(y)} examples)")
+    r2, n_examples = result
+    print(f"\nR²: {r2:.3f}  ({n_examples} examples)")
     print(f"\nDeployable:  {domain_name}/specialist/")
     print(f"  predict.py   — from specialist.predict import predict, record")
     print(f"  retrain.py   — python retrain.py  (retrains on real outcomes)")
@@ -176,10 +120,10 @@ def cmd_run(args):
     run_id                = datetime.now().strftime("%Y%m%d-%H%M%S")
 
     # Sim hash — warn if simulation.py changed since last run
-    import hashlib as _hashlib
+    import hashlib
     sim_path = domain_path / "simulation.py"
     if sim_path.exists():
-        sim_hash = _hashlib.md5(sim_path.read_bytes()).hexdigest()[:8]
+        sim_hash = hashlib.md5(sim_path.read_bytes()).hexdigest()[:8]
         pack_path = domain_path / "pack.json"
         pack_data = {}
         if pack_path.exists():
@@ -395,8 +339,7 @@ def cmd_run(args):
                         del sys.modules["simulation"]
                     pack_path = domain_path / "pack.json"
                     if pack_path.exists():
-                        import hashlib as _hashlib
-                        new_hash = _hashlib.md5((domain_path / "simulation.py").read_bytes()).hexdigest()[:8]
+                        new_hash = hashlib.md5((domain_path / "simulation.py").read_bytes()).hexdigest()[:8]
                         pack_data = json.loads(pack_path.read_text())
                         pack_data["sim_hash"] = new_hash
                         pack_path.write_text(json.dumps(pack_data, indent=2) + "\n")

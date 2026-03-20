@@ -16,7 +16,7 @@ from pathlib import Path
 from api import structured_ai_call, ai_backend_available
 from utils import (
     load_env, load_mission, load_world_model, load_hypotheses,
-    normalize_confidence, normalize_playbook_entry,
+    normalize_confidence, normalize_playbook_entry, load_jsonl,
 )
 
 MODEL_LIBRARY  = os.environ.get("AUTOFORGE_LIBRARY_MODEL", "claude-sonnet-4-6")
@@ -118,16 +118,7 @@ def _load_eval_feedback(domain_path: Path) -> list[str]:
     except Exception:
         return []
 
-    scenarios = []
-    for line in evals_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        try:
-            scenarios.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-
+    scenarios = load_jsonl(evals_path, skip_comments=True)
     if not scenarios:
         return []
 

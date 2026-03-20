@@ -23,9 +23,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from utils import normalize_playbook_entry
-
-ENGINE_ROOT = Path(__file__).parent
+from utils import normalize_playbook_entry, random_candidate_from_schema
 
 _SIM = None
 
@@ -155,24 +153,11 @@ def _generate_procedural_candidates(domain_path: Path, n: int = 16) -> list:
     """
     import random
 
-    schema_props = _SIM.CANDIDATE_SCHEMA.get("properties", {})
+    schema = _SIM.CANDIDATE_SCHEMA
+    schema_props = schema.get("properties", {})
 
     def random_candidate() -> dict:
-        c = {}
-        for key, spec in schema_props.items():
-            if spec.get("type") == "number":
-                lo = spec.get("minimum", 0.0)
-                hi = spec.get("maximum", 1.0)
-                c[key] = round(random.uniform(lo, hi), 4)
-            elif spec.get("type") == "integer":
-                lo = spec.get("minimum", 0)
-                hi = spec.get("maximum", 10)
-                c[key] = random.randint(lo, hi)
-            elif "enum" in spec:
-                c[key] = random.choice(spec["enum"])
-            else:
-                c[key] = None
-        return c
+        return random_candidate_from_schema(schema)
 
     def mutate(base: dict) -> dict:
         child = dict(base)
