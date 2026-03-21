@@ -58,9 +58,9 @@ def _load_playbook(domain_path: Path) -> list:
 
 
 def _save_playbook(domain_path: Path, playbook: list):
-    with open(domain_path / "playbook.jsonl", "w") as f:
-        for entry in playbook:
-            f.write(json.dumps(entry) + "\n")
+    from utils import _atomic_write
+    pb_path = domain_path / "playbook.jsonl"
+    _atomic_write(pb_path, "".join(json.dumps(entry) + "\n" for entry in playbook))
 
 
 def _context_tags(context: dict) -> list[str]:
@@ -137,11 +137,11 @@ def _select_top_candidates(
     return selected[:limit]
 
 
-# ── Stage 1: evolutionary candidate generation ────────────────────────────────
+# ── Procedural candidate generation (batch 1 / no-brain fallback) ────────────
 
 def _generate_procedural_candidates(domain_path: Path, n: int = 16) -> list:
     """
-    Evolutionary Stage 1 candidate generation. No API calls.
+    Procedural candidate generation. No API calls.
 
     Reads top_candidates.json from the prior batch and evolves from them:
     - Elitism: keep top 2 winners unchanged
@@ -212,7 +212,7 @@ def run_batch(
     use_brain: bool = False,
     workers: int = 1,
     run_id: str = "",
-    adversarial_states: list = None,
+    batch_num: int = 0,
 ) -> dict:
     """
     Run one batch of the tournament.
@@ -220,8 +220,8 @@ def run_batch(
     domain_path:       path to the domain folder
     n_rounds:          how many rounds to run
     generation_offset: global round counter offset (for logging)
-    hints:             director hints from the prior batch (Stage 2)
-    use_brain:         True → Stage 2 (Sonnet generates archetype library)
+    hints:             director hints from the prior batch
+    use_brain:         True → AI archetypes (Sonnet generates archetype library)
     workers:           parallel simulation workers
 
     Returns a result dict consumed by the director call.
@@ -248,7 +248,7 @@ def run_batch(
     playbook  = _load_playbook(domain_path)
     log_path  = domain_path / "tournament_log.jsonl"
 
-    # ── Stage 2: generate archetype library via Sonnet ────────────────────────
+    # ── AI archetypes: generate library via Sonnet ───────────────────────────
     archetypes = []
     if use_brain:
         from brain import call_library
@@ -259,7 +259,7 @@ def run_batch(
             candidate_schema=_SIM.CANDIDATE_SCHEMA,
         )
 
-    # ── Stage 1: generate procedural candidates once per batch ───────────────
+    # ── Procedural fallback: generate candidates without AI ──────────────────
     stage1_candidates = []
     stage1_names      = []
     if not archetypes:
@@ -282,14 +282,7 @@ def run_batch(
     tag_candidate_wins       = defaultdict(lambda: defaultdict(int))
     tag_totals               = defaultdict(int)
 
-    adversarial = adversarial_states or []
-    n_adv = min(len(adversarial), n_rounds // 5)
-    if n_adv > 0:
-        import random as _random
-        states = adversarial[:n_adv] + [_SIM.random_state() for _ in range(n_rounds - n_adv)]
-        _random.shuffle(states)
-    else:
-        states = [_SIM.random_state() for _ in range(n_rounds)]
+    states = [_SIM.random_state() for _ in range(n_rounds)]
     contexts = [build_context(s) for s in states]
 
     # ── Score all rounds ──────────────────────────────────────────────────────
@@ -319,6 +312,7 @@ def run_batch(
 
             entry = {
                 "round":        round_num,
+                "batch":        batch_num,
                 "score":        winner_score,
                 "score_margin": score_margin,
                 "metric":       _SIM.METRIC_NAME,
@@ -381,7 +375,7 @@ def run_batch(
                 json.dumps(champion_data, indent=2)
             )
 
-    # ── Save top candidates for Stage 1 evolution ────────────────────────────
+    # ── Save top candidates for procedural evolution (batch 1 seed) ──────────
     if archetypes:
         selection_scores = {
             a["name"]: archetype_wins_nonevent.get(a["name"], 0) * 2

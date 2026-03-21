@@ -19,7 +19,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-train-numeric = ["xgboost", "pandas", "numpy"]
+train = ["mlx", "mlx-lm"]
 
 [project.urls]
 Homepage = "https://github.com/autoforge/autoforge"

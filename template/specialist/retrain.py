@@ -1,85 +1,97 @@
-"""Retrain the specialist from real outcomes. No Autoforge needed."""
+"""
+Retrain the specialist on real outcomes. No Autoforge needed.
 
-import csv
+Run manually:   python specialist/retrain.py
+Or via cron:    0 2 * * * cd /your/app && python specialist/retrain.py
+"""
+
 import json
-import numpy as np
-import xgboost as xgb
+import subprocess
+import sys
 from pathlib import Path
 
-_dir = Path(__file__).parent
+_DIR = Path(__file__).parent
+OUTCOMES_PATH = _DIR / "outcomes.jsonl"
+MIN_OUTCOMES = 50
+
+
+def _outcomes() -> list:
+    if not OUTCOMES_PATH.exists():
+        return []
+    items = []
+    for line in OUTCOMES_PATH.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            items.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return items
+
+
+def _make_training_examples(outcomes: list) -> Path:
+    """Convert real outcomes into fine-tuning JSONL."""
+    train_path = _DIR / "retrain_data.jsonl"
+    with open(train_path, "w") as f:
+        for o in outcomes:
+            features = o.get("features", {})
+            outcome  = o.get("outcome", 0)
+            user_content = "\n".join(f"{k}: {v}" for k, v in features.items())
+            assistant_content = f"Outcome: {outcome}"
+            example = {
+                "messages": [
+                    {"role": "user",      "content": user_content},
+                    {"role": "assistant", "content": assistant_content},
+                ]
+            }
+            f.write(json.dumps(example) + "\n")
+    return train_path
 
 
 def retrain():
-    cfg = json.loads((_dir / "config.json").read_text())
-    features = cfg["features"]
-    params = cfg["params"]
-    all_cols = features + params
+    outcomes = _outcomes()
+    n = len(outcomes)
 
-    # Load original training data
-    rows_X, rows_y = [], []
-    csv_path = _dir.parent / "training_features.csv"
-    if csv_path.exists():
-        with open(csv_path) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    x = [float(row.get(c, 0)) for c in all_cols]
-                    y = float(row.get("score", 0))
-                    rows_X.append(x)
-                    rows_y.append(y)
-                except (ValueError, TypeError):
-                    continue
-        print(f"Loaded {len(rows_X)} rows from training_features.csv")
-
-    # Load real outcomes
-    outcomes_path = _dir / "outcomes.jsonl"
-    n_real = 0
-    if outcomes_path.exists():
-        for line in outcomes_path.read_text().splitlines():
-            if not line.strip():
-                continue
-            try:
-                entry = json.loads(line)
-                state = entry.get("state", {})
-                decision = entry.get("decision", {})
-                outcome = float(entry.get("outcome", 0))
-                x = [float(state.get(f, 0)) for f in features] + \
-                    [float(decision.get(p, 0)) for p in params]
-                rows_X.append(x)
-                rows_y.append(outcome)
-                n_real += 1
-            except (ValueError, TypeError, json.JSONDecodeError):
-                continue
-        print(f"Loaded {n_real} real outcomes from outcomes.jsonl")
-
-    if not rows_X:
-        print("No training data found.")
+    if n < MIN_OUTCOMES:
+        print(f"{n} outcomes logged — need {MIN_OUTCOMES}+ to retrain. Recording more outcomes.")
         return
 
-    X = np.array(rows_X)
-    y = np.array(rows_y)
+    print(f"Retraining on {n} real outcomes...")
 
-    dtrain = xgb.DMatrix(X, label=y, feature_names=all_cols)
-    xgb_params = {"max_depth": 4, "eta": 0.1, "objective": "reg:squarederror", "verbosity": 0}
-    model = xgb.train(xgb_params, dtrain, num_boost_round=200,
-                      evals=[(dtrain, "train")], verbose_eval=50)
+    train_path = _make_training_examples(outcomes)
+    adapter_path = _DIR / "retrain_adapters"
+    model_path   = _DIR / "model"
 
-    model.save_model(str(_dir / "model.json"))
+    if not model_path.exists():
+        print(f"Model not found at {model_path} — run autoforge train first.")
+        sys.exit(1)
 
-    preds = model.predict(dtrain)
-    ss_res = float(np.sum((y - preds) ** 2))
-    ss_tot = float(np.sum((y - y.mean()) ** 2))
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    # Fine-tune with LoRA (200 iterations — fast update, not a full retrain)
+    try:
+        subprocess.run([
+            sys.executable, "-m", "mlx_lm.lora",
+            "--model", str(model_path),
+            "--train",
+            "--data", str(_DIR),
+            "--iters", "200",
+            "--batch-size", "2",
+            "--adapter-path", str(adapter_path),
+            "--train-file", train_path.name,
+        ], check=True, cwd=str(_DIR))
+    except FileNotFoundError:
+        print("mlx_lm not found — install with: pip install mlx mlx-lm")
+        sys.exit(1)
 
-    # Update config
-    cfg["trained_on"] = len(rows_X)
-    cfg["real_outcomes"] = n_real
-    cfg["r2"] = round(r2, 4)
-    (_dir / "config.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    # Fuse adapter back into model (updates model in place)
+    subprocess.run([
+        sys.executable, "-m", "mlx_lm.fuse",
+        "--model", str(model_path),
+        "--adapter-path", str(adapter_path),
+        "--save-path", str(model_path),
+    ], check=True)
 
-    print(f"\nRetrained: {len(rows_X)} total examples ({n_real} real)")
-    print(f"R²: {r2:.3f}")
-    print(f"Saved: model.json")
+    print(f"Retrained on {n} real outcomes. Model updated.")
 
 
 if __name__ == "__main__":

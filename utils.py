@@ -1,9 +1,9 @@
 """
 utils.py — File/data helpers. No AI calls.
 
-Provides: ENGINE_ROOT, load_env, load_sim, load_world_model, load_hypotheses,
+Provides: ENGINE_ROOT, load_env, load_sim, load_world_model, load_mission,
           normalize_confidence, normalize_playbook_entry, retire_principles,
-          append_thinking_log, git_commit_batch.
+          append_breakthroughs, append_thinking_log, git_commit_batch.
 """
 
 import json
@@ -12,7 +12,20 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-ENGINE_ROOT = Path(__file__).parent
+ENGINE_ROOT   = Path(__file__).parent
+DOMAINS_ROOT  = Path.home() / ".autoforge"
+DOMAINS_ROOT.mkdir(exist_ok=True)
+
+
+def _atomic_write(path: Path, text: str):
+    """Write text to path atomically via a temp file + rename. Prevents corruption on crash."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def load_env(domain_path: Path):
@@ -68,33 +81,6 @@ def load_world_model(domain_path: Path) -> str:
     return "\n\n".join(parts) if parts else ""
 
 
-def load_hypotheses(domain_path: Path) -> dict:
-    """Load hypothesis state from hypotheses.json."""
-    h_path = domain_path / "hypotheses.json"
-    if h_path.exists():
-        try:
-            return json.loads(h_path.read_text())
-        except Exception:
-            pass
-    return {"confirmed": [], "open": [], "tested": []}
-
-
-def save_hypotheses(domain_path: Path, analysis: dict, prior_hypotheses: dict) -> dict:
-    """
-    Merge director hypothesis output into cumulative hypotheses.json.
-    Confirmed hypotheses accumulate. Open hypotheses replace prior open list.
-    """
-    confirmed = list(set(
-        prior_hypotheses.get("confirmed", []) +
-        analysis.get("hypotheses_confirmed", [])
-    ))
-    open_hyp = analysis.get("hypotheses_open", [])
-    tested = analysis.get("hypotheses_tested", [])
-
-    payload = {"confirmed": confirmed, "open": open_hyp, "tested": tested}
-    (domain_path / "hypotheses.json").write_text(json.dumps(payload, indent=2) + "\n")
-    return payload
-
 
 def normalize_confidence(value) -> float:
     """Normalize legacy confidence values like 73 into 0.73."""
@@ -129,9 +115,7 @@ def retire_principles(analysis: dict, domain_path: Path):
     if safe_to_retire:
         kept = [e for e in entries if e.get("topic") not in safe_to_retire]
         retired_count = len(entries) - len(kept)
-        with open(pb_path, "w") as f:
-            for e in kept:
-                f.write(json.dumps(e) + "\n")
+        _atomic_write(pb_path, "".join(json.dumps(e) + "\n" for e in kept))
         if retired_count:
             print(f"  retired {retired_count} principle(s): {', '.join(safe_to_retire)}")
 
@@ -140,39 +124,32 @@ def retire_principles(analysis: dict, domain_path: Path):
         for t in safe_to_retire:
             if t not in rt_list:
                 rt_list.append(t)
-        rt_path.write_text(json.dumps(rt_list))
+        _atomic_write(rt_path, json.dumps(rt_list))
 
     blocked = [t for t in to_retire if t in protected]
     if blocked:
         print(f"  protected (>=88% conf): {', '.join(blocked)}")
 
 
+def append_breakthroughs(domain_path: Path, batch_num: int, breakthroughs: list):
+    """Append any breakthroughs from this batch to breakthroughs.jsonl."""
+    if not breakthroughs:
+        return
+    bt_path = domain_path / "breakthroughs.jsonl"
+    with open(bt_path, "a") as f:
+        for bt in breakthroughs:
+            f.write(json.dumps({"batch": batch_num, **bt}) + "\n")
+
+
 def append_thinking_log(log_path: Path, batch_num: int, result: dict, analysis: dict):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    simulation_fix_section = ""
+    fix_section = ""
     if analysis.get("simulation_fix_suggestions"):
         fixes = chr(10).join(f"- {s}" for s in analysis["simulation_fix_suggestions"])
-        simulation_fix_section = f"\n**Simulation fix suggestions:**\n{fixes}\n"
-
-    hypotheses_section = ""
-    if analysis.get("hypotheses_tested"):
-        hypotheses_section += f"\n**Hypotheses tested:** {', '.join(analysis['hypotheses_tested'])}"
-    if analysis.get("hypotheses_confirmed"):
-        hypotheses_section += f"\n**Hypotheses confirmed:** {', '.join(analysis['hypotheses_confirmed'])}"
-    if analysis.get("hypotheses_open"):
-        hypotheses_section += f"\n**Open hypotheses:** {', '.join(analysis['hypotheses_open'])}"
-
-    evolution_section = ""
-    if analysis.get("simulation_patch_needed"):
-        evolution_section += f"\n**Simulation patch needed:** {analysis.get('simulation_patch_rationale', '')}"
-    schema_evo = analysis.get("schema_evolution", {})
-    if schema_evo.get("add_parameters"):
-        evolution_section += "\n**Schema additions proposed:** " + ", ".join(p["name"] for p in schema_evo["add_parameters"])
-    if schema_evo.get("remove_parameters"):
-        evolution_section += "\n**Schema removals proposed:** " + ", ".join(p["name"] for p in schema_evo["remove_parameters"])
+        fix_section = f"\n**Simulation fix suggestions:**\n{fixes}\n"
 
     section = f"""
-## Batch {batch_num} — {timestamp}  |  {result['n_rounds']} rounds  |  avg score {result['avg_score']}  |  trend {result['trend_pct']:+.1f}%
+## Batch {batch_num} — {timestamp}  |  {result['n_rounds']} rounds  |  avg {result['avg_score']}  |  trend {result['trend_pct']:+.1f}%
 
 **Verdict:** {analysis['verdict']}
 
@@ -185,15 +162,11 @@ def append_thinking_log(log_path: Path, batch_num: int, result: dict, analysis: 
 **Concerns:**
 {chr(10).join(f"- {c}" for c in analysis['concerns']) or "- none"}
 
-**Mistakes to not repeat:**
-{chr(10).join(f"- {m}" for m in analysis['mistakes_to_note']) or "- none"}
-
 **Next batch focus:** {analysis['next_batch_focus']}
 
-**Hints injected for next batch:**
+**Hints:**
 {chr(10).join(f"- {h}" for h in analysis['hints']) or "- none"}
-{hypotheses_section}{simulation_fix_section}{evolution_section}
-
+{fix_section}{("**Breakthroughs:**" + chr(10) + chr(10).join(f"- ★ {bt['principle']} ({bt['evidence']})" for bt in analysis.get('breakthroughs', [])) + chr(10)) if analysis.get('breakthroughs') else ""}
 ---"""
 
     with open(log_path, "a") as f:
@@ -262,7 +235,7 @@ def git_commit_batch(domain: str, domain_path: Path, global_batch: int, result: 
     """
     import subprocess
 
-    git_dir = ENGINE_ROOT / ".git"
+    git_dir = DOMAINS_ROOT / ".git"
     if not git_dir.exists():
         return
 
@@ -273,8 +246,7 @@ def git_commit_batch(domain: str, domain_path: Path, global_batch: int, result: 
         domain_path / "top_candidates.json",
         domain_path / "simulation.py",
         domain_path / "world_model.md",
-        domain_path / "hypotheses.json",
-        domain_path / "prompts",
+        domain_path / "breakthroughs.jsonl",
     ]
     existing = [str(p.relative_to(ENGINE_ROOT)) for p in stage_targets if p.exists()]
     if not existing:
@@ -295,16 +267,16 @@ def git_commit_batch(domain: str, domain_path: Path, global_batch: int, result: 
     try:
         subprocess.run(
             ["git", "add"] + existing,
-            cwd=ENGINE_ROOT, check=True, capture_output=True,
+            cwd=DOMAINS_ROOT, check=True, capture_output=True,
         )
         result_proc = subprocess.run(
             ["git", "diff", "--cached", "--quiet"],
-            cwd=ENGINE_ROOT, capture_output=True,
+            cwd=DOMAINS_ROOT, capture_output=True,
         )
         if result_proc.returncode != 0:
             subprocess.run(
                 ["git", "commit", "-m", msg],
-                cwd=ENGINE_ROOT, check=True, capture_output=True,
+                cwd=DOMAINS_ROOT, check=True, capture_output=True,
             )
     except Exception:
         pass

@@ -1,22 +1,20 @@
 """
-brain.py — Archetype library, adversarial scenarios, principle extraction.
+brain.py — Archetype library and principle extraction.
 
-call_library():          Generate 16 named strategy archetypes for Stage 2.
-call_adversarial():      Generate targeted scenarios for the champion's weak spots.
+call_library():          Generate 16 named strategy archetypes per batch.
 extract_principles_ai(): Extract conditional principles from a tournament round.
 """
 
 import json
 import os
 import sys
-import importlib
 from collections import defaultdict
 from pathlib import Path
 
 from api import structured_ai_call, ai_backend_available
 from utils import (
-    load_env, load_mission, load_world_model, load_hypotheses,
-    normalize_confidence, normalize_playbook_entry, load_jsonl,
+    load_env, load_world_model, load_mission,
+    normalize_confidence, normalize_playbook_entry,
 )
 
 MODEL_LIBRARY  = os.environ.get("AUTOFORGE_LIBRARY_MODEL", "claude-sonnet-4-6")
@@ -100,56 +98,6 @@ def _load_reference_strategies(domain_path: Path) -> list:
     return strategies
 
 
-def _load_eval_feedback(domain_path: Path) -> list[str]:
-    """Summarize current eval failures so the next library can target them."""
-    evals_path = domain_path / "evals" / "scenarios.jsonl"
-    if not evals_path.exists():
-        return []
-
-    strategies = _load_reference_strategies(domain_path)
-    if not strategies:
-        return []
-
-    if str(domain_path) not in sys.path:
-        sys.path.insert(0, str(domain_path))
-
-    try:
-        sim = importlib.import_module("simulation")
-    except Exception:
-        return []
-
-    scenarios = load_jsonl(evals_path, skip_comments=True)
-    if not scenarios:
-        return []
-
-    failures = []
-    passed = 0
-    for scenario in scenarios:
-        state = scenario.get("state", {})
-        if not state:
-            continue
-        scored = [
-            (sim.simulate(item["strategy"], state), item.get("name", "candidate"))
-            for item in strategies
-        ]
-        best_score, best_name = max(scored, key=lambda item: item[0])
-        min_score = scenario.get("min_score", 0)
-        if best_score >= min_score:
-            passed += 1
-            continue
-        failures.append(
-            f"- {scenario.get('id', '?')}: best current strategy `{best_name}` scored "
-            f"{best_score:.2f} vs required {min_score:.2f} "
-            f"({scenario.get('description', '')[:80]})"
-        )
-
-    if not failures:
-        return [f"Current eval status: passing {passed}/{len(scenarios)} scenarios. Maintain breadth."]
-
-    lines = [f"Current eval status: passing {passed}/{len(scenarios)} scenarios.", "Failed evals:"]
-    lines.extend(failures[:6])
-    return lines
-
 
 def generate_library_prompt(playbook: list, hints: list, domain_path: Path) -> str:
     """Build the user-turn prompt for library generation."""
@@ -183,12 +131,6 @@ def generate_library_prompt(playbook: list, hints: list, domain_path: Path) -> s
             "",
         ]
 
-    eval_feedback = _load_eval_feedback(domain_path)
-    if eval_feedback:
-        lines.append("EVAL FEEDBACK:")
-        lines.extend(eval_feedback)
-        lines.append("")
-
     if playbook:
         lines.append("CURRENT PLAYBOOK PRINCIPLES:")
         for p in playbook:
@@ -202,18 +144,6 @@ def generate_library_prompt(playbook: list, hints: list, domain_path: Path) -> s
     if hints:
         lines.append("HINTS FROM PRIOR DIRECTOR BATCH:")
         for h in hints:
-            lines.append(f"  - {h}")
-        lines.append("")
-
-    hypotheses = load_hypotheses(domain_path)
-    if hypotheses.get("open"):
-        lines.append("OPEN HYPOTHESES TO TEST (design archetypes that test these):")
-        for h in hypotheses["open"]:
-            lines.append(f"  - {h}")
-        lines.append("")
-    if hypotheses.get("confirmed"):
-        lines.append("CONFIRMED HYPOTHESES (build on these):")
-        for h in hypotheses["confirmed"][-5:]:
             lines.append(f"  - {h}")
         lines.append("")
 
@@ -242,88 +172,6 @@ def _clamp_strategy(strategy: dict, schema: dict) -> dict:
             result[key] = val
     return result
 
-
-_ADVERSARIAL_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "scenarios": {"type": "array", "items": {"type": "string"}},
-        "rationale": {"type": "string"},
-    },
-    "required": ["scenarios", "rationale"],
-    "additionalProperties": False,
-}
-
-
-def call_adversarial(
-    domain_path: Path,
-    n: int = 20,
-    context_mix: dict = None,
-    champion: dict = None,
-) -> list:
-    """
-    Generate adversarial scenarios targeting the champion's weak spots.
-    Returns a list of state dicts to inject into the next batch.
-    """
-    load_env(domain_path)
-    if str(domain_path) not in sys.path:
-        sys.path.insert(0, str(domain_path))
-    try:
-        sim = importlib.import_module("simulation")
-        sample_states = [sim.random_state() for _ in range(3)]
-    except Exception:
-        return []
-
-    mission_text = load_mission(domain_path)
-    rare_contexts = []
-    if context_mix:
-        rare_contexts = [k for k, _ in sorted(context_mix.items(), key=lambda x: x[1])[:5]]
-
-    n_crisis = max(2, n // 5)
-    n_edge   = n - n_crisis
-
-    user_prompt = f"""Generate {n} adversarial state scenarios for this domain.
-
-Mission: {mission_text or "(none)"}
-Champion philosophy: {champion.get("philosophy", "(unknown)") if champion else "(none yet)"}
-
-Sample states — your output must match this exact schema:
-{json.dumps(sample_states, indent=2)}
-
-REQUIRED — generate exactly {n_crisis} CRISIS / DOOMSDAY scenarios (regardless of what the \
-tournament has seen so far). These must represent the worst imaginable conditions for this domain: \
-catastrophic collapses, coordinated attacks, cascading failures, pandemic-level shocks, \
-adversarial extremes — whatever "everything goes wrong at once" looks like here. \
-Push numeric values to their worst extremes. Do not generate average or edge-case states for these slots.
-
-REMAINING {n_edge} scenarios — target the champion's weak spots and underrepresented contexts:
-{chr(10).join(f"  - {c}" for c in rare_contexts) if rare_contexts else "  (none identified — generate edge cases)"}
-
-Return each scenario as a JSON-encoded string in the 'scenarios' array.
-Each string must be valid JSON matching the schema above exactly."""
-
-    try:
-        data = structured_ai_call(
-            task_name="adversarial",
-            domain_path=domain_path,
-            model=MODEL_LIBRARY,
-            max_tokens=4096,
-            system_prompt="You are generating adversarial test scenarios for a strategy evaluation engine.",
-            user_prompt=user_prompt,
-            schema=_ADVERSARIAL_SCHEMA,
-            metadata={"n": n},
-        )
-        expected_keys = set(sample_states[0].keys()) if sample_states else set()
-        valid = []
-        for s in data.get("scenarios", []):
-            try:
-                state = json.loads(s)
-                if isinstance(state, dict) and set(state.keys()) >= expected_keys:
-                    valid.append(state)
-            except Exception:
-                continue
-        return valid[:n]
-    except Exception:
-        return []
 
 
 def call_library(
@@ -364,10 +212,9 @@ def call_library(
             return archetypes
         except Exception as e:
             if attempt == 0:
+                print(f"  [brain] library generation attempt 1 failed: {e} — retrying")
                 continue
             raise RuntimeError(f"Library generation failed: {e}") from e
-
-    return []
 
 
 # ── Principle extraction (Haiku, every 10 rounds) ─────────────────────────────

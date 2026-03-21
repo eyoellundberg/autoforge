@@ -16,28 +16,26 @@ Environment overrides:
   AUTOFORGE_DIRECTOR_MODEL
   AUTOFORGE_LIBRARY_MODEL
   AUTOFORGE_EXTRACT_MODEL
-  AUTOFORGE_EVOLVE_MODEL
   AUTOFORGE_EVALS_MODEL
-  AUTOFORGE_GROUND_MODEL
-  AUTOFORGE_DEEP_DIVE_MODEL
+  AUTOFORGE_BOOTSTRAP_MODEL
 """
 
 import argparse
 import sys
 
-from utils import ENGINE_ROOT
+from utils import ENGINE_ROOT, DOMAINS_ROOT
 from bootstrap import cmd_bootstrap
 from run import cmd_run
 from validate import cmd_calibrate, cmd_validate
 from tools import (
     cmd_export, cmd_status, cmd_pack, cmd_install, cmd_eval,
-    cmd_import, cmd_tail, cmd_train, cmd_generate_evals,
+    cmd_import, cmd_tail, cmd_train, cmd_generate_evals, cmd_ask,
 )
 
 
 _SUBCOMMANDS = {
     "bootstrap", "run", "calibrate", "validate", "export", "status",
-    "pack", "install", "eval", "import", "tail", "train", "generate-evals",
+    "pack", "install", "eval", "import", "tail", "train", "generate-evals", "ask",
 }
 
 
@@ -45,7 +43,7 @@ def _cmd_go(args):
     """The unified pipeline: bootstrap (if needed) → validate → run → train."""
     from progress import Pipeline
 
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
 
     if not domain_path.exists():
         if not args.description:
@@ -65,15 +63,12 @@ def _cmd_go(args):
             cmd_import(args)
         elif (domain_path / "run_checkpoint.json").exists():
             print(f"Run in progress — resuming...\n")
-            args.batches = getattr(args, "batches", 8)
+            import os
+            args.batches = getattr(args, "batches", 30)
             args.rounds = getattr(args, "rounds", 200)
-            args.years = getattr(args, "years", 1)
-            args.brain = True
-            args.auto = True
-            args.self_evolve = getattr(args, "self_evolve", False)
-            args.ground = getattr(args, "ground", False)
             args.manual_ai = False
-            args.workers = getattr(args, "workers", 1)
+            if not getattr(args, "workers", None) or args.workers <= 1:
+                args.workers = min(max(1, (os.cpu_count() or 2) - 1), 8)
             cmd_run(args)
         else:
             cmd_status(args)
@@ -90,7 +85,7 @@ def _cmd_go(args):
         stages.append("Bootstrap domain")
     stages += [
         "Validate simulation",
-        "Train — Stage 1 → Stage 2 → specialist",
+        "Train — tournament → specialist",
     ]
 
     pipe = Pipeline(args.domain, stages)
@@ -108,15 +103,12 @@ def _cmd_go(args):
             sys.exit(1)
 
     with pipe.stage():
-        args.batches = getattr(args, "batches", 8)
+        import os
+        args.batches = getattr(args, "batches", 30)
         args.rounds = getattr(args, "rounds", 200)
-        args.years = getattr(args, "years", 1)
-        args.brain = False
-        args.auto = True
-        args.self_evolve = getattr(args, "self_evolve", False)
-        args.ground = getattr(args, "ground", False)
         args.manual_ai = getattr(args, "manual_ai", False)
-        args.workers = getattr(args, "workers", 1)
+        if not getattr(args, "workers", None) or args.workers <= 1:
+            args.workers = min(max(1, (os.cpu_count() or 2) - 1), 8)
         cmd_run(args)
 
     pipe.summary()
@@ -124,12 +116,48 @@ def _cmd_go(args):
     spec_dir = domain_path / "specialist"
     if spec_dir.exists():
         print(f"\n  Deploy:   cp -r {args.domain}/specialist/ /your/app/")
-        print(f"  Use:      from specialist.predict import predict, record")
+        print(f"  Use:      from specialist.ask import ask, record")
         print(f"  Retrain:  python retrain.py  (on real outcomes, no Autoforge needed)")
     print()
 
 
+def _cmd_interactive():
+    """No args: prompt for name and description, then run the full pipeline."""
+    import os
+    print("\nAutoforge\n")
+    try:
+        name = input("  What do you want to call it?  > ").strip()
+        if not name:
+            print("Name required.")
+            sys.exit(1)
+        description = input("  What does it do?           > ").strip()
+        if not description:
+            print("Description required.")
+            sys.exit(1)
+    except (EOFError, KeyboardInterrupt):
+        print("\nAborted.")
+        sys.exit(0)
+
+    args = argparse.Namespace(
+        domain=name,
+        description=description,
+        yes=False,
+        manual=False,
+        batches=8,
+        rounds=200,
+        workers=min(max(1, (os.cpu_count() or 2) - 1), 8),
+        eval=False,
+        pack=False,
+        import_file=None,
+    )
+    _cmd_go(args)
+
+
 def main():
+    # No args → interactive setup
+    if len(sys.argv) == 1:
+        return _cmd_interactive()
+
     # Check if first arg is a known subcommand → power-user mode
     if len(sys.argv) > 1 and sys.argv[1] in _SUBCOMMANDS:
         return _main_subcommands()
@@ -147,10 +175,7 @@ def main():
     parser.add_argument("--manual", action="store_true", help="Scaffold without AI")
     parser.add_argument("--batches", type=int, default=8, help="Batches (default 8)")
     parser.add_argument("--rounds", type=int, default=200, help="Rounds per batch (default 200)")
-    parser.add_argument("--years", type=int, default=1, help="Years (default 1)")
     parser.add_argument("--workers", type=int, default=1, help="Parallel workers (default 1)")
-    parser.add_argument("--self-evolve", action="store_true", help="Allow sim self-evolution")
-    parser.add_argument("--ground", action="store_true", help="Enable reality grounding")
     parser.add_argument("--eval", action="store_true", help="Run eval scenarios")
     parser.add_argument("--pack", action="store_true", help="Bundle as .zip")
     parser.add_argument("--import", dest="import_file", metavar="FILE", help="Import real outcomes")
@@ -180,12 +205,6 @@ def _main_subcommands():
     p_run.add_argument("--domain", required=True)
     p_run.add_argument("--batches", type=int, default=8)
     p_run.add_argument("--rounds", type=int, default=200)
-    p_run.add_argument("--years", type=int, default=1)
-    p_run.add_argument("--brain", action="store_true", help="Stage 2")
-    p_run.add_argument("--auto", action="store_true", help="Auto-promote Stage 1 → 2")
-    p_run.add_argument("--self-evolve", action="store_true")
-    p_run.add_argument("--ground", action="store_true")
-    p_run.add_argument("--manual-ai", action="store_true")
     p_run.add_argument("--workers", type=int, default=1)
 
     # calibrate
@@ -236,6 +255,11 @@ def _main_subcommands():
     p_ge.add_argument("--domain", required=True)
     p_ge.add_argument("--n", type=int, default=10)
 
+    # ask
+    p_ask = subparsers.add_parser("ask", help="Query the specialist from the terminal")
+    p_ask.add_argument("--domain", required=True)
+    p_ask.add_argument("question", help="Question or feature dict (JSON string)")
+
     args = parser.parse_args()
 
     dispatch = {
@@ -252,5 +276,6 @@ def _main_subcommands():
         "tail":           cmd_tail,
         "train":          cmd_train,
         "generate-evals": cmd_generate_evals,
+        "ask":            cmd_ask,
     }
     dispatch[args.command](args)

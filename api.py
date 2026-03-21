@@ -8,11 +8,32 @@ All structured AI calls go through structured_ai_call(). Supports:
 
 import json
 import os
+import random as _random
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+
+_RETRY_STATUS = {429, 500, 503, 529}
+_MAX_RETRIES = 3
+
+
+def _urlopen_with_backoff(req, timeout: int = 300) -> dict:
+    """urllib.request.urlopen with exponential backoff on rate-limit / server errors."""
+    for attempt in range(_MAX_RETRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code not in _RETRY_STATUS or attempt == _MAX_RETRIES - 1:
+                err = json.loads(e.read().decode())
+                raise RuntimeError(
+                    f"Anthropic API {e.code}: {err.get('error', {}).get('message', err)}"
+                )
+            wait = (2 ** attempt) + _random.random()
+            print(f"  [api] HTTP {e.code} — retrying in {wait:.1f}s (attempt {attempt + 1}/{_MAX_RETRIES})")
+            time.sleep(wait)
 
 
 def get_ai_backend() -> str:
@@ -145,13 +166,11 @@ def structured_ai_call(
             headers=headers,
             method="POST",
         )
+        body = _urlopen_with_backoff(req, timeout=300)
         try:
-            with urllib.request.urlopen(req, timeout=300) as resp:
-                body = json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            err = json.loads(e.read().decode())
-            raise RuntimeError(f"Anthropic API {e.code}: {err.get('error', {}).get('message', err)}")
-        text_block = next(b for b in body["content"] if b["type"] == "text")
+            text_block = next(b for b in body["content"] if b["type"] == "text")
+        except StopIteration:
+            raise RuntimeError(f"No text block in Anthropic API response: {body.get('content')}")
         return json.loads(text_block["text"])
 
     raise RuntimeError(f"Unsupported AI backend: '{backend}'. Set AUTOFORGE_AI_BACKEND=anthropic or manual.")

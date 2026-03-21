@@ -6,15 +6,14 @@ tools.py — Domain management commands: status, tail, pack, install, eval,
 import json
 import shutil
 import sys
-from datetime import datetime
 from pathlib import Path
 
-from utils import ENGINE_ROOT, load_env, load_sim, normalize_confidence, load_jsonl
+from utils import ENGINE_ROOT, DOMAINS_ROOT, load_sim, normalize_confidence, load_jsonl
 
 
 def cmd_status(args):
     """Show domain state: playbook, champion, last run, log stats."""
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain folder not found: {domain_path}")
         sys.exit(1)
@@ -84,7 +83,7 @@ def cmd_status(args):
 
 def cmd_tail(args):
     """Live snapshot of an in-progress run."""
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain not found: {domain_path}")
         sys.exit(1)
@@ -115,9 +114,9 @@ def cmd_tail(args):
     print(f"{'─'*40}")
 
     if ckpt:
-        stage    = "Stage 2 (AI)" if ckpt.get("use_brain") else "Stage 1 (evolutionary)"
+        stage    = "AI archetypes" if ckpt.get("use_brain") else "procedural"
         pb_sizes = ckpt.get("playbook_sizes", [])
-        print(f"Batch:    {ckpt['global_batch']}  (year {ckpt['year_num']})")
+        print(f"Batch:    {ckpt.get('batch_num', '?')}")
         print(f"Stage:    {stage}")
         print(f"Playbook: {pb_sizes[-1] if pb_sizes else '?'} principles")
         pa = ckpt.get("prior_analysis") or {}
@@ -125,9 +124,6 @@ def cmd_tail(args):
             print(f"Verdict:  {pa['verdict']}")
         if pa.get("next_batch_focus"):
             print(f"Focus:    {pa['next_batch_focus'][:72]}")
-        for row in ckpt.get("all_batch_rows", [])[-6:]:
-            arrow = "↑" if row["trend"] == "up" else ("↓" if row["trend"] == "down" else "─")
-            print(f"  batch {row['batch']:3d}  avg {row['avg']:6.2f}  best {row['best']:6.2f}  {arrow}")
     else:
         print("No active run checkpoint.")
 
@@ -142,7 +138,7 @@ def cmd_pack(args):
     """Bundle a domain into a shareable .zip pack."""
     import zipfile
 
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain not found: {domain_path}")
         sys.exit(1)
@@ -168,9 +164,8 @@ def cmd_pack(args):
 
     include = [
         "simulation.py", "world_model.md", "mission.md", "pack.json",
-        "hypotheses.json", "prompts/brain.md", "prompts/extract.md",
-        "prompts/director.md", "playbook.jsonl", "champion_archetype.json",
-        "top_candidates.json", "abstain_threshold.json",
+        "playbook.jsonl", "champion_archetype.json",
+        "top_candidates.json", "abstain_threshold.json", "breakthroughs.jsonl",
     ]
     evals_path = domain_path / "evals"
     if evals_path.exists():
@@ -180,7 +175,7 @@ def cmd_pack(args):
     name     = pack.get("name", args.domain)
     version  = pack.get("version", "1.0.0")
     zip_name = f"{name}-{version}.zip"
-    zip_path = ENGINE_ROOT / zip_name
+    zip_path = Path.cwd() / zip_name
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel in include:
@@ -198,7 +193,7 @@ def cmd_pack(args):
 def cmd_install(args):
     """Install a domain pack from a .zip file."""
     import zipfile
-    zip_path = Path(args.pack) if Path(args.pack).is_absolute() else ENGINE_ROOT / args.pack
+    zip_path = Path(args.pack) if Path(args.pack).is_absolute() else Path.cwd() / args.pack
 
     if not zip_path.exists():
         print(f"Pack file not found: {zip_path}")
@@ -210,14 +205,14 @@ def cmd_install(args):
             print("Empty zip file.")
             sys.exit(1)
         domain_name = names[0].split("/")[0]
-        domain_path = ENGINE_ROOT / domain_name
+        domain_path = DOMAINS_ROOT / domain_name
 
         if domain_path.exists() and not getattr(args, "force", False):
             print(f"Domain '{domain_name}' already exists. Use --force to overwrite.")
             sys.exit(1)
 
         domain_path.mkdir(exist_ok=True)
-        zf.extractall(ENGINE_ROOT)
+        zf.extractall(DOMAINS_ROOT)
 
     nested = domain_path / domain_name
     if nested.exists():
@@ -242,7 +237,7 @@ def cmd_install(args):
 
 def cmd_eval(args):
     """Run the champion strategy against eval scenarios and report pass/fail."""
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain not found: {domain_path}")
         sys.exit(1)
@@ -312,7 +307,7 @@ def cmd_eval(args):
 
 def cmd_export(args):
     """Export Stage 3 training data from tournament_log.jsonl."""
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain folder not found: {domain_path}")
         sys.exit(1)
@@ -323,7 +318,7 @@ def cmd_export(args):
 
 def cmd_generate_evals(args):
     """Auto-generate eval scenarios from world_model.md."""
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain not found: {domain_path}")
         sys.exit(1)
@@ -337,165 +332,80 @@ def cmd_generate_evals(args):
         print(f"\nRun evals:  autoforge eval --domain {args.domain}")
 
 
-def _generate_specialist(domain_path: Path, domain_name: str, domain_type: str,
-                         feature_cols: list, state_keys: list, param_keys: list,
-                         param_ranges: dict, abstain_threshold: float, r2: float,
-                         n_examples: int):
-    """Generate the standalone specialist/ folder — copy templates + write config."""
-    spec_dir = domain_path / "specialist"
-    spec_dir.mkdir(exist_ok=True)
-
-    config = {
-        "domain":            domain_name,
-        "domain_type":       domain_type,
-        "features":          feature_cols,
-        "state_keys":        state_keys,
-        "params":            param_keys,
-        "param_ranges":      param_ranges,
-        "abstain_threshold": abstain_threshold,
-        "trained_on":        n_examples,
-        "r2":                round(r2, 4),
-        "version":           datetime.now().strftime("%Y%m%d-%H%M%S"),
-    }
-    (spec_dir / "config.json").write_text(json.dumps(config, indent=2) + "\n")
-
-    src_model = domain_path / "model.json"
-    if src_model.exists():
-        shutil.copy2(src_model, spec_dir / "model.json")
-
-    template_spec = ENGINE_ROOT / "template" / "specialist"
-    for fname in ("predict.py", "retrain.py"):
-        src = template_spec / fname
-        if src.exists():
-            shutil.copy2(src, spec_dir / fname)
-
-    return spec_dir
-
-
-def _train_xgboost(domain_path: Path, domain_name: str, *, verbose: bool = False):
-    """
-    Shared XGBoost training logic: train model, compute R², detect columns,
-    generate specialist/. Returns (r2, n_examples) or None on failure.
-    """
-    import importlib
-
-    try:
-        import xgboost as xgb
-        import pandas as pd
-        import numpy as np
-    except ImportError as e:
-        print(f"  XGBoost not installed — run: pip install xgboost pandas numpy")
-        return None
-
-    csv_path = domain_path / "training_features.csv"
-    if not csv_path.exists():
-        return None
-
-    df = pd.read_csv(csv_path)
-    feature_cols = [c for c in df.columns if c not in ("score", "score_margin", "uncertain")]
-    X, y = df[feature_cols].values, df["score"].values
-
-    dtrain = xgb.DMatrix(X, label=y, feature_names=feature_cols)
-    params = {"max_depth": 4, "eta": 0.1, "objective": "reg:squarederror", "verbosity": 0}
-    train_kwargs = {}
-    if verbose:
-        train_kwargs = {"evals": [(dtrain, "train")], "verbose_eval": 50}
-    model = xgb.train(params, dtrain, num_boost_round=200, **train_kwargs)
-    model.save_model(str(domain_path / "model.json"))
-
-    preds = model.predict(dtrain)
-    ss_res = float(np.sum((y - preds) ** 2))
-    ss_tot = float(np.sum((y - y.mean()) ** 2))
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
-
-    # Detect state vs param columns
-    state_keys, param_keys = feature_cols, []
-    try:
-        sys.path.insert(0, str(domain_path))
-        sim = importlib.import_module("simulation")
-        schema_props = list(getattr(sim, "CANDIDATE_SCHEMA", {}).get("properties", {}).keys())
-        param_keys = [c for c in feature_cols if c in schema_props]
-        state_keys = [c for c in feature_cols if c not in schema_props]
-        sys.path.pop(0)
-        if "simulation" in sys.modules:
-            del sys.modules["simulation"]
-    except Exception:
-        pass
-
-    param_ranges = {}
-    for p in param_keys:
-        if p in df.columns:
-            col = pd.to_numeric(df[p], errors="coerce").dropna()
-            if len(col) > 0:
-                param_ranges[p] = [float(col.min()), float(col.max())]
-
-    abstain_threshold = 0.0
-    threshold_path = domain_path / "abstain_threshold.json"
-    if threshold_path.exists():
-        try:
-            abstain_threshold = json.loads(threshold_path.read_text()).get("threshold", 0.0)
-        except Exception:
-            pass
-
-    _generate_specialist(
-        domain_path, domain_name, "numerical",
-        feature_cols, state_keys, param_keys,
-        param_ranges, abstain_threshold, r2, len(y),
-    )
-
-    return r2, len(y)
-
 
 def cmd_train(args):
-    """Train a Stage 3 model from exported training data."""
-    domain_path = ENGINE_ROOT / args.domain
+    """Fine-tune Qwen3-4B on tournament data via LoRA (Apple Silicon / MLX)."""
+    import subprocess
+
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain not found: {domain_path}")
         sys.exit(1)
 
-    from export import _detect_domain_type, export_training_data
-    domain_type = _detect_domain_type(domain_path)
-
-    csv_path   = domain_path / "training_features.csv"
     jsonl_path = domain_path / "training_data.jsonl"
-
-    if not csv_path.exists() and not jsonl_path.exists():
-        print("No training data found — running export first...\n")
+    if not jsonl_path.exists():
+        print("No training data — running export first...\n")
+        from export import export_training_data
         export_training_data(domain_path)
 
-    if domain_type == "numerical":
-        if not csv_path.exists():
-            print(f"No training_features.csv — run: autoforge export --domain {args.domain}")
-            sys.exit(1)
+    if not jsonl_path.exists():
+        print(f"Export produced no training data. Run some batches first.")
+        sys.exit(1)
 
-        print(f"Training XGBoost on {csv_path.name}...")
-        result = _train_xgboost(domain_path, args.domain, verbose=True)
-        if result is None:
-            sys.exit(1)
-        r2, n_examples = result
+    n = sum(1 for l in jsonl_path.read_text().splitlines() if l.strip())
+    model_id = "mlx-community/Qwen3-4B-4bit"
+    adapter_path = domain_path / "adapters"
+    spec_dir = domain_path / "specialist"
+    spec_model_path = spec_dir / "model"
 
-        print(f"\nR²: {r2:.3f}  ({n_examples} examples)")
-        print(f"\nDeployable:  {args.domain}/specialist/")
-        print(f"  predict.py   — from specialist.predict import predict, record")
-        print(f"  retrain.py   — python retrain.py  (retrains on real outcomes)")
-        print(f"  model.json   — XGBoost weights")
-        print(f"  config.json  — features, params, threshold")
+    print(f"\nFine-tuning {model_id}")
+    print(f"  {n} training examples  ·  500 iterations  ·  LoRA")
+    print(f"  Estimated time: 15–30 min on Apple Silicon\n")
 
-    else:
-        if not jsonl_path.exists():
-            print(f"No training_data.jsonl — run: autoforge export --domain {args.domain}")
-            sys.exit(1)
+    try:
+        subprocess.run([
+            sys.executable, "-m", "mlx_lm.lora",
+            "--model", model_id,
+            "--train",
+            "--data", str(domain_path),
+            "--iters", "500",
+            "--batch-size", "2",
+            "--adapter-path", str(adapter_path),
+        ], check=True)
+    except FileNotFoundError:
+        print("mlx_lm not found — install with: pip install mlx mlx-lm")
+        sys.exit(1)
 
-        n  = sum(1 for l in jsonl_path.read_text().splitlines() if l.strip())
-        dn = args.domain
-        print(f"Language domain — {n} training examples")
-        print(f"\nFine-tune (Apple Silicon):")
-        print(f"  mlx_lm.lora --model mlx-community/Qwen3-4B-4bit \\")
-        print(f"               --data {dn}/ --train --iters 1000")
-        print(f"\nFuse + Ollama:")
-        print(f"  mlx_lm.fuse --model mlx-community/Qwen3-4B-4bit \\")
-        print(f"               --adapter-path {dn}/adapters --save-path {dn}/fused-model")
-        print(f'  ollama create {dn.lower()} -f - <<EOF\nFROM ./{dn}/fused-model\nEOF')
+    print(f"\nFusing adapter into model...")
+    spec_dir.mkdir(exist_ok=True)
+    subprocess.run([
+        sys.executable, "-m", "mlx_lm.fuse",
+        "--model", model_id,
+        "--adapter-path", str(adapter_path),
+        "--save-path", str(spec_model_path),
+    ], check=True)
+
+    # Copy playbook and world model into specialist/ for runtime context
+    for fname in ("playbook.jsonl", "world_model.md"):
+        src = domain_path / fname
+        if src.exists():
+            shutil.copy2(src, spec_dir / fname)
+
+    # Write ask.py and retrain.py from templates
+    template_spec = ENGINE_ROOT / "template" / "specialist"
+    for fname in ("ask.py", "retrain.py"):
+        src = template_spec / fname
+        if src.exists():
+            shutil.copy2(src, spec_dir / fname)
+
+    print(f"\nSpecialist ready: {args.domain}/specialist/")
+    print(f"  from specialist.ask import ask, record")
+    print(f"  ask({{\"basis\": -0.35, \"carry\": 0.02, ...}})  # get recommendation")
+    print(f"  record(features, outcome)                      # log real outcome")
+    print(f"\nRetrain on real outcomes:")
+    print(f"  python {args.domain}/specialist/retrain.py")
+    print(f"\nOr add to cron (nightly 2am):")
+    print(f"  0 2 * * * cd /your/app && python specialist/retrain.py")
 
 
 def cmd_import(args):
@@ -505,7 +415,7 @@ def cmd_import(args):
     """
     import statistics
 
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain not found: {domain_path}")
         sys.exit(1)
@@ -612,3 +522,23 @@ def cmd_import(args):
     print(f"  production_log.jsonl — provenance trail")
     print(f"  tournament_log.jsonl — {len(records)} records added to Stage 3 training data")
     print(f"\nRun 'autoforge export --domain {args.domain}' to include in Stage 3.")
+
+
+def cmd_ask(args):
+    """Query the specialist directly from the terminal."""
+    import importlib.util
+
+    domain_path = DOMAINS_ROOT / args.domain
+    spec_dir    = domain_path / "specialist"
+    ask_path    = spec_dir / "ask.py"
+
+    if not ask_path.exists():
+        print(f"No specialist found for {args.domain}.")
+        print(f"Run: autoforge train --domain {args.domain}")
+        sys.exit(1)
+
+    spec = importlib.util.spec_from_file_location("specialist_ask", ask_path)
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    print(mod.ask(args.question))

@@ -9,7 +9,7 @@ import importlib
 from pathlib import Path
 
 from api import structured_ai_call
-from utils import ENGINE_ROOT, load_env, load_sim, load_world_model, random_candidate_from_schema, midpoint_candidate_from_schema
+from utils import ENGINE_ROOT, DOMAINS_ROOT, load_env, load_sim, load_world_model, random_candidate_from_schema, midpoint_candidate_from_schema
 
 
 # ── Eval generation ───────────────────────────────────────────────────────────
@@ -263,7 +263,7 @@ def validate_domain(domain_path) -> tuple:
                 ok.append(f"prompts/{fname} exists (legacy)")
                 has_legacy = True
             else:
-                warnings.append(f"prompts/{fname} missing — needed for Stage 2 (--brain)")
+                warnings.append(f"prompts/{fname} missing — needed for AI archetype generation")
         if has_legacy:
             warnings.append("Using legacy prompt files — consider migrating to world_model.md")
 
@@ -272,7 +272,7 @@ def validate_domain(domain_path) -> tuple:
 
 def cmd_validate(args):
     """Sanity-check simulation.py: imports, required exports, schema, sim output."""
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain not found: {domain_path}")
         sys.exit(1)
@@ -292,7 +292,7 @@ def cmd_calibrate(args):
     import statistics
     import collections
 
-    domain_path = ENGINE_ROOT / args.domain
+    domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
         print(f"Domain not found: {domain_path}")
         sys.exit(1)

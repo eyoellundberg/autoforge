@@ -77,8 +77,8 @@ def run(
     rounds      : int
         Rounds per batch (default 200). More = better signal per batch.
     brain       : bool
-        True (default) = Stage 2, AI-generated archetypes + playbook.
-        False = Stage 1, evolutionary only. No API key needed.
+        True (default) = AI-generated archetypes + playbook.
+        False = procedural/evolutionary only. No API key needed.
     workers     : int
         Parallel simulation workers (default 1).
     verbose     : bool
@@ -151,7 +151,7 @@ def run(
             if brain and batch_num < batches:
                 try:
                     from director import call_director
-                    analysis = call_director(batch_num, result, None, [], domain_path, [])
+                    analysis = call_director(batch_num, result, None, domain_path, [])
                     hints = analysis.get("hints", [])
                 except Exception:
                     hints = []

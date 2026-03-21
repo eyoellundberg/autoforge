@@ -7,7 +7,7 @@ import os
 import shutil
 import sys
 
-from utils import ENGINE_ROOT, load_world_model
+from utils import ENGINE_ROOT, DOMAINS_ROOT
 from director import BOOTSTRAP_SCHEMA
 from api import structured_ai_call
 from validate import validate_domain, _print_validation
@@ -35,7 +35,7 @@ PREVIEW_SCHEMA = {
 def cmd_bootstrap(args):
     """Generate a new domain from a description, or scaffold manually with --manual."""
     template_path = ENGINE_ROOT / "template"
-    domain_path   = ENGINE_ROOT / args.domain
+    domain_path   = DOMAINS_ROOT / args.domain
 
     if domain_path.exists():
         print(f"Error: {domain_path} already exists.")
@@ -107,75 +107,91 @@ def cmd_bootstrap(args):
 
     print(f"\nGenerating {args.domain}...")
 
-    system_prompt = """You are designing a simulation domain for Autoforge, an autonomous strategy learning system.
+    system_prompt = """You are a domain expert AND simulation designer for Autoforge, an autonomous strategy learning system.
 
-Autoforge works by:
-1. Building a world model — a generative model of how the domain works in reality
-2. Generating strategy archetypes that explore different approaches (via Sonnet)
-3. Running a deterministic simulation that scores each strategy against random scenarios
-4. Extracting conditional principles from what wins (via Haiku)
-5. A director AI tracking hypotheses, analyzing results, and directing exploration
-6. Optionally evolving the simulation itself when gaps are discovered
+Your job: think deeply about this domain as an expert practitioner, then build a simulation rich enough
+that a learning engine can discover real strategy principles from it.
 
-You will generate simulation.py and a unified world_model.md steering document.
+STEP 1 — THINK LIKE AN EXPERT:
+Before writing any code, ask yourself:
+- What are ALL the variables that actually drive decisions in this domain?
+- What do real practitioners worry about that novices miss?
+- What are the non-obvious interactions? (e.g. variable A only matters when B is high)
+- What makes this domain hard? What prevents any single strategy from always winning?
+
+CANDIDATE_SCHEMA — THE STRATEGY SPACE:
+Identify 20-35 variables that expert practitioners actually use when making decisions.
+Not generic placeholders — the real levers. For grain marketing: basis, carry, cash flow,
+South America crop status, seasonal timing, hedge ratio, storage capacity. All of them.
+Each must meaningfully affect the outcome in simulate().
 
 SIMULATION.PY REQUIREMENTS:
 - simulate(candidate: dict, state: dict) -> float   # deterministic, fast, no I/O
-- random_state() -> dict                             # draws one scenario from the domain distribution
-- CANDIDATE_SCHEMA: dict                             # JSON schema describing a strategy's parameters
-- METRIC_NAME: str                                   # e.g. "expected_value", "profit", "accuracy"
+- random_state() -> dict                             # draws one rich scenario from the domain distribution
+- CANDIDATE_SCHEMA: dict                             # JSON schema — all the strategy levers
+- METRIC_NAME: str                                   # e.g. "expected_profit", "accuracy", "roi"
 
 SIMULATION DESIGN PRINCIPLE:
-The best simulations are generative world models, not scoring functions.
-simulate() should return expected value: P(good_outcome | features) × magnitude.
-When simulate() models the real-world outcome, the tournament discovers strategies
-that work for grounded reasons, not arbitrary assumptions.
+The simulation is a generative world model, not a scoring function.
+simulate() returns expected value: P(good_outcome | strategy, state) × magnitude.
 
 Examples:
-- Fraud detection: P(fraud | signals) × cost_of_fraud - P(false_positive) × cost_of_flag
-- Pitch scoring: P(meaningful_outcome | team, traction, market) × expected_return
-- Freight bidding: P(winning_bid | price, market) × margin
-- Loan approval: P(repayment) × interest_revenue - P(default) × loss_given_default
+- Grain marketing: P(profitable_sale | basis, carry, timing) × expected_margin
+- Freight pricing: P(winning_bid | price, market_rate) × margin_if_won
+- Loan approval: P(repayment) × revenue - P(default) × loss
+- Fraud detection: P(fraud | signals) × prevented_loss - P(false_positive) × friction_cost
 
 CALIBRATION RULES:
 - simulate() must be deterministic — same inputs always produce same output
-- random_state() must cover diverse scenarios — different types should favor different strategies
-- The score range should be reasonable (not 1e9)
-- No single strategy should dominate all scenarios — variety is essential for learning
-- Use empirically-calibrated probability distributions where possible
+- random_state() must generate rich, diverse scenarios that favor different strategies
+- Score range should be reasonable (not 1e9)
+- No single strategy should dominate all scenarios — tension is essential for learning
+- Use empirically-calibrated distributions reflecting how this domain actually behaves
 
-CANDIDATE_SCHEMA RULES:
-- Must be a valid JSON schema object
-- Parameters should be numeric ranges or small enums
-- Include 3-6 meaningful dimensions that a strategy can vary
-- Each dimension should meaningfully affect the score in simulate()
+WORLD MODEL — agent instructions for brain, director, extractor, and specialist.
+Write this as a precise specification, not a human explainer. Agents act on it directly.
 
-WORLD MODEL RULES:
-world_model_md must be a single steering document with these sections:
+## Variables
+List every state variable with: type, range, key thresholds, and what it signals.
+Format:
+  name: description. Range: X to Y. Threshold: Z (what crossing Z means).
+Example:
+  carry: cost of storing grain per month. Range: -0.02 to +0.08.
+         Threshold: +0.02 (above = storage pays, hold bias increases sharply).
 
-## Domain Understanding
-What is this domain? How does it work in reality? What are the key dynamics,
-tensions, and failure modes? What should the AI director watch for during training?
+## Decision Rules
+Explicit IF/THEN conditionals that govern good decisions in this domain.
+These are the patterns the specialist must learn. Include interactions.
+Format:
+  IF [condition] → [action] because [mechanism]
+Example:
+  IF carry > 0.02 AND sa_risk < elevated → hold bias (storage paying, supply risk ahead)
+  IF basis < -0.40 → sell regardless of carry (basis collapse overrides all)
 
-## Strategy Space
-How should strategy archetypes be generated? What dimensions matter?
-What range of approaches should be explored? Include instructions for generating
-16 diverse archetypes covering the full strategy space.
+## Strategy Space (brain instructions)
+Directives for generating 16 archetypes. Name the archetype types that MUST exist.
+What dimensions span the space? What is the contrarian bet? What combos are interesting?
+Be explicit: "generate one archetype that ignores carry entirely and trades only on basis momentum"
 
-## Extraction Guidance
-What principles are worth learning? What context factors matter?
-What patterns are real domain knowledge vs simulation artifacts?
+## Extraction Guidance (extractor instructions)
+Explicit patterns worth extracting vs artifacts to reject.
+Format:
+  EXTRACT: IF [context] AND [condition] → [outcome] (conditional, domain-specific, has mechanism)
+  REJECT:  any principle claiming X always beats Y — sim cannot verify unconditional dominance
+  WATCH:   [context factor] × [context factor] interactions — these produce the most valuable principles
 Include the placeholder: {{RETIRED_TOPICS}}
 
-## Success Criteria
-What decision does the specialist make? What does good look like?
-When should it abstain? What must never happen?
+## Director Watchlist
+Specific failure modes for this domain the director must flag:
+  - [exact condition that indicates reward hacking in this sim]
+  - [exact condition that indicates mode collapse]
+  - [exact condition that indicates a sim artifact principle]
 
-## Current Hypotheses
-Start with: "- (none yet — populated after first batch)"
-Then end the section with these exact lines (the engine writes hypothesis updates between them):
-<!-- hypotheses-start -->
-<!-- hypotheses-end -->
+## Success Criteria
+Job: [one sentence — what decision does this specialist make]
+Excellent: [specific, numeric — what good outcomes look like]
+Never: [hard constraints — what must never happen]
+Abstain when: [conditions where the specialist should escalate to a human]
 """
 
     user_prompt = f"""Generate all domain files for Autoforge based on this description:
@@ -186,7 +202,7 @@ Requirements:
 - simulation_py: complete, runnable Python file with all required exports. Should be a generative
   world model returning expected value, not an arbitrary scoring function.
 - world_model_md: unified steering document with all sections (Domain Understanding, Strategy Space,
-  Extraction Guidance, Success Criteria, Current Hypotheses). Include {{{{RETIRED_TOPICS}}}} placeholder
+  Extraction Guidance, Success Criteria). Include {{{{RETIRED_TOPICS}}}} placeholder
   in the Extraction Guidance section.
 - context_keys: list of key names from random_state() that should appear in build_context()
 - calibration_notes: specific things to check/tune in the simulation before running
@@ -195,7 +211,7 @@ Requirements:
 """
 
     try:
-        backend_domain_path = domain_path.parent if domain_path.parent.exists() else ENGINE_ROOT
+        backend_domain_path = DOMAINS_ROOT
         data = structured_ai_call(
             task_name="bootstrap",
             domain_path=backend_domain_path,
@@ -296,10 +312,9 @@ Requirements:
     else:
         print(f"""
 Next:
-  1. Review {args.domain}/world_model.md  — the steering document for the entire learning loop
-  2. Review {args.domain}/simulation.py   — the generative world model the engine learns from
+  1. Review {args.domain}/world_model.md  — the steering document for the learning loop
+  2. Review {args.domain}/simulation.py   — check the variables look right for your domain
 
-  autoforge calibrate --domain {args.domain}               # check score range + dominance
-  autoforge run       --domain {args.domain} --batches 5 --rounds 100
-  autoforge run       --domain {args.domain} --brain --batches 5 --rounds 150
-  autoforge run       --domain {args.domain} --brain --self-evolve --batches 8 --rounds 200""")
+  autoforge calibrate --domain {args.domain}        # check score range + no single winner
+  autoforge {args.domain}                           # run the full training pipeline
+""")

@@ -50,6 +50,54 @@ def _format_strategy(strategy: dict) -> str:
     return json.dumps(strategy, sort_keys=True)
 
 
+def _verbalize_response(state: dict, winner: dict, score: float, playbook: list) -> str:
+    """
+    Build a natural language recommendation from tournament winner data.
+    Uses playbook principles as the reasoning chain.
+    """
+    # Find the most relevant principles (match on context keys present in state)
+    state_keys = set(str(v).lower() for v in state.values())
+    relevant = []
+    for p in playbook:
+        ctx = p.get("context", "").lower()
+        principle = p.get("principle", "")
+        condition = p.get("condition") or ""
+        if not principle:
+            continue
+        # Loosely match principles whose context overlaps with current state
+        if ctx and any(k in ctx for k in state_keys):
+            relevant.append((p.get("confidence", 0), principle, condition))
+        else:
+            relevant.append((p.get("confidence", 0) * 0.5, principle, condition))
+
+    relevant.sort(reverse=True)
+    top_principles = relevant[:3]
+
+    # Format state context
+    state_summary = "  ".join(f"{k}: {v}" for k, v in list(state.items())[:6])
+
+    # Format strategy parameters cleanly
+    strategy_lines = "\n".join(f"  {k}: {v}" for k, v in winner.items())
+
+    # Build response
+    lines = [f"Scenario: {state_summary}", ""]
+    lines.append("Recommended strategy:")
+    lines.append(strategy_lines)
+    lines.append("")
+
+    if top_principles:
+        lines.append("Reasoning:")
+        for _, principle, condition in top_principles:
+            if condition:
+                lines.append(f"  - {principle} (when {condition})")
+            else:
+                lines.append(f"  - {principle}")
+        lines.append("")
+
+    lines.append(f"Expected outcome: {score:.3f}")
+    return "\n".join(lines)
+
+
 def _detect_domain_type(domain_path: Path) -> str:
     """
     Returns "numerical" if all CANDIDATE_SCHEMA params are numbers/integers/enums,
@@ -132,6 +180,20 @@ def export_training_data(domain_path: Path):
     system_parts.append(f"Playbook principles:\n{playbook_context}")
     system_content = "\n\n".join(system_parts)
 
+    # Identify breakthrough batches — examples from these get written twice
+    bt_path = domain_path / "breakthroughs.jsonl"
+    breakthrough_batches = set()
+    if bt_path.exists():
+        for line in bt_path.read_text().splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    breakthrough_batches.add(json.loads(line)["batch"])
+                except (KeyError, json.JSONDecodeError):
+                    pass
+    if breakthrough_batches:
+        print(f"Breakthrough batches (2x weight): {sorted(breakthrough_batches)}")
+
     written = 0
     with open(out_path, "w") as f:
         for score, entry in kept:
@@ -143,11 +205,14 @@ def export_training_data(domain_path: Path):
                 "messages": [
                     {"role": "system",    "content": system_content},
                     {"role": "user",      "content": f"Scenario:\n{_format_scenario(state)}"},
-                    {"role": "assistant", "content": json.dumps(winner)},
+                    {"role": "assistant", "content": _verbalize_response(state, winner, score, playbook)},
                 ]
             }
             f.write(json.dumps(example) + "\n")
             written += 1
+            if entry.get("batch") in breakthrough_batches:
+                f.write(json.dumps(example) + "\n")
+                written += 1
 
     pref_path = domain_path / "training_preferences.jsonl"
     pref_written = 0
