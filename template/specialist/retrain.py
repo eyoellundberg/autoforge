@@ -1,5 +1,5 @@
 """
-Retrain the specialist on real outcomes. No Autoforge needed.
+Retrain the specialist on real outcomes. No Playbook-ml needed.
 
 Run manually:   python specialist/retrain.py
 Or via cron:    0 2 * * * cd /your/app && python specialist/retrain.py
@@ -64,7 +64,7 @@ def retrain():
     model_path   = _DIR / "model"
 
     if not model_path.exists():
-        print(f"Model not found at {model_path} — run autoforge train first.")
+        print(f"Model not found at {model_path} — run playbook-ml train first.")
         sys.exit(1)
 
     # Fine-tune with LoRA (200 iterations — fast update, not a full retrain)

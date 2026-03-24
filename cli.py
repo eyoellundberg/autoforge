@@ -1,29 +1,55 @@
 """
-cli.py — Autoforge CLI entry point.
+cli.py — Playbook ML CLI entry point.
 
 Primary interface:
-  autoforge Domain "description"       # create + train (full pipeline)
-  autoforge Domain                     # status or resume
-  autoforge Domain --eval              # run eval scenarios
-  autoforge Domain --pack              # bundle as .zip
-  autoforge Domain --import file.jsonl # import real outcomes
-  autoforge install pack.zip           # install a domain pack
+  playbook-ml Domain "description"       # create + train (full pipeline)
+  playbook-ml Domain                     # status or resume
+  playbook-ml Domain --eval              # run eval scenarios
+  playbook-ml Domain --pack              # bundle as .zip
+  playbook-ml Domain --import file.jsonl # import real outcomes
+  playbook-ml install pack.zip           # install a domain pack
 
 Power-user subcommands (granular control):
-  autoforge bootstrap, run, calibrate, validate, export, train, status, tail
+  playbook-ml bootstrap, run, calibrate, validate, export, train, status, tail
 
 Environment overrides:
-  AUTOFORGE_DIRECTOR_MODEL
-  AUTOFORGE_LIBRARY_MODEL
-  AUTOFORGE_EXTRACT_MODEL
-  AUTOFORGE_EVALS_MODEL
-  AUTOFORGE_BOOTSTRAP_MODEL
+  PLAYBOOK_ML_DIRECTOR_MODEL
+  PLAYBOOK_ML_LIBRARY_MODEL
+  PLAYBOOK_ML_EXTRACT_MODEL
+  PLAYBOOK_ML_EVALS_MODEL
+  PLAYBOOK_ML_BOOTSTRAP_MODEL
 """
 
 import argparse
+import os
 import sys
 
 from utils import ENGINE_ROOT, DOMAINS_ROOT
+
+
+def _ensure_api_key():
+    """Prompt for ANTHROPIC_API_KEY if not set, save to ENGINE_ROOT/.env."""
+    from utils import load_env
+    load_env(ENGINE_ROOT)
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        return
+    print("\nAnthropic API key not found.")
+    print("Get yours at https://console.anthropic.com/settings/keys\n")
+    try:
+        key = input("  Paste your API key: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nAborted.")
+        sys.exit(0)
+    if not key:
+        print("No key entered — exiting.")
+        sys.exit(1)
+    env_path = ENGINE_ROOT / ".env"
+    existing = env_path.read_text() if env_path.exists() else ""
+    lines = [l for l in existing.splitlines() if not l.startswith("ANTHROPIC_API_KEY")]
+    lines.append(f"ANTHROPIC_API_KEY={key}")
+    env_path.write_text("\n".join(lines) + "\n")
+    os.environ["ANTHROPIC_API_KEY"] = key
+    print()
 from bootstrap import cmd_bootstrap
 from run import cmd_run
 from validate import cmd_calibrate, cmd_validate
@@ -49,9 +75,11 @@ def _cmd_go(args):
         if not args.description:
             print(f"Domain '{args.domain}' not found.")
             print(f"\nCreate it:")
-            print(f"  autoforge {args.domain} \"describe your domain here\"")
-            print(f"  autoforge {args.domain} --manual")
+            print(f"  playbook-ml {args.domain} \"describe your domain here\"")
+            print(f"  playbook-ml {args.domain} --manual")
             sys.exit(1)
+
+    _ensure_api_key()
 
     if not args.description and domain_path.exists():
         if getattr(args, "eval", False):
@@ -117,14 +145,14 @@ def _cmd_go(args):
     if spec_dir.exists():
         print(f"\n  Deploy:   cp -r {args.domain}/specialist/ /your/app/")
         print(f"  Use:      from specialist.ask import ask, record")
-        print(f"  Retrain:  python retrain.py  (on real outcomes, no Autoforge needed)")
+        print(f"  Retrain:  python retrain.py  (on real outcomes, no Playbook ML needed)")
     print()
 
 
 def _cmd_interactive():
     """No args: prompt for name and description, then run the full pipeline."""
     import os
-    print("\nAutoforge\n")
+    print("\nPlaybook ML\n")
     try:
         name = input("  What do you want to call it?  > ").strip()
         if not name:
@@ -134,9 +162,17 @@ def _cmd_interactive():
         if not description:
             print("Description required.")
             sys.exit(1)
+        # Flush any buffered stdin (e.g. from pasting multi-line text)
+        import termios
+        try:
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        except Exception:
+            pass
     except (EOFError, KeyboardInterrupt):
         print("\nAborted.")
         sys.exit(0)
+
+    _ensure_api_key()
 
     args = argparse.Namespace(
         domain=name,
@@ -162,11 +198,11 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in _SUBCOMMANDS:
         return _main_subcommands()
 
-    # Primary interface: autoforge Domain ["description"] [flags]
+    # Primary interface: playbook-ml Domain ["description"] [flags]
     parser = argparse.ArgumentParser(
-        prog="autoforge",
-        description="Autoforge — autonomous strategy learning system",
-        usage="autoforge Domain [\"description\"] [options]",
+        prog="playbook-ml",
+        description="Playbook ML — autonomous strategy learning system",
+        usage="playbook-ml Domain [\"description\"] [options]",
     )
     parser.add_argument("domain", help="Domain name (e.g. FreightQuoting)")
     parser.add_argument("description", nargs="?", default=None,
@@ -187,8 +223,8 @@ def main():
 def _main_subcommands():
     """Power-user mode: explicit subcommands for granular control."""
     parser = argparse.ArgumentParser(
-        prog="autoforge",
-        description="Autoforge — power-user subcommands",
+        prog="playbook-ml",
+        description="Playbook ML — power-user subcommands",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

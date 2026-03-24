@@ -16,6 +16,9 @@ from datetime import datetime
 from pathlib import Path
 
 _RETRY_STATUS = {429, 500, 503, 529}
+
+
+
 _MAX_RETRIES = 3
 
 
@@ -38,7 +41,7 @@ def _urlopen_with_backoff(req, timeout: int = 300) -> dict:
 
 def get_ai_backend() -> str:
     """Return the configured AI backend."""
-    return os.environ.get("AUTOFORGE_AI_BACKEND", "anthropic").strip().lower() or "anthropic"
+    return os.environ.get("PLAYBOOK_ML_AI_BACKEND", "anthropic").strip().lower() or "anthropic"
 
 
 def _valid_anthropic_key() -> bool:
@@ -101,8 +104,8 @@ def _manual_ai_roundtrip(
         f"  reply to: {response_path}"
     )
 
-    timeout_s = int(os.environ.get("AUTOFORGE_MANUAL_TIMEOUT_SECONDS", "1800"))
-    poll_s = float(os.environ.get("AUTOFORGE_MANUAL_POLL_SECONDS", "1.0"))
+    timeout_s = int(os.environ.get("PLAYBOOK_ML_MANUAL_TIMEOUT_SECONDS", "1800"))
+    poll_s = float(os.environ.get("PLAYBOOK_ML_MANUAL_POLL_SECONDS", "1.0"))
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if response_path.exists():
@@ -154,7 +157,8 @@ def structured_ai_call(
             "output_config": {"format": {"type": "json_schema", "schema": schema}},
         }
         if thinking:
-            payload["thinking"] = {"type": "adaptive"}
+            budget = max(1024, max_tokens - 4000)
+            payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
         headers = {
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
@@ -173,4 +177,4 @@ def structured_ai_call(
             raise RuntimeError(f"No text block in Anthropic API response: {body.get('content')}")
         return json.loads(text_block["text"])
 
-    raise RuntimeError(f"Unsupported AI backend: '{backend}'. Set AUTOFORGE_AI_BACKEND=anthropic or manual.")
+    raise RuntimeError(f"Unsupported AI backend: '{backend}'. Set PLAYBOOK_ML_AI_BACKEND=anthropic or manual.")

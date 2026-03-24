@@ -32,7 +32,7 @@ class Pipeline:
 
     def summary(self):
         total = time.time() - self._start
-        print(f"\n\033[1mAutoforge — {self.domain}\033[0m  ({_fmt_time(total)})")
+        print(f"\n\033[1mPlaybook ML — {self.domain}\033[0m  ({_fmt_time(total)})")
         for label, elapsed, ok in self.results:
             icon = "\033[32m✔\033[0m" if ok else "\033[31m✗\033[0m"
             print(f"  {icon} {label:<44} {_fmt_time(elapsed):>6}")

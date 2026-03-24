@@ -14,7 +14,7 @@ from utils import ENGINE_ROOT, DOMAINS_ROOT, load_env, load_sim, load_world_mode
 
 # ── Eval generation ───────────────────────────────────────────────────────────
 
-MODEL_EVALS = os.environ.get("AUTOFORGE_EVALS_MODEL", "claude-opus-4-6")
+MODEL_EVALS = os.environ.get("PLAYBOOK_ML_EVALS_MODEL", "claude-opus-4-6")
 
 _EVAL_GEN_SCHEMA = {
     "type": "object",
@@ -284,7 +284,7 @@ def cmd_validate(args):
         sys.exit(1)
     else:
         print(f"\nDomain {args.domain} looks good. Run:")
-        print(f"  autoforge run --domain {args.domain} --batches 3 --rounds 50")
+        print(f"  playbook-ml run --domain {args.domain} --batches 3 --rounds 50")
 
 
 def cmd_calibrate(args):
@@ -422,4 +422,4 @@ def cmd_calibrate(args):
         print(f"\n  Edit {args.domain}/simulation.py and re-run calibrate.")
     else:
         print(f"\nCalibration looks good.")
-        print(f"  autoforge run --domain {args.domain} --batches 3 --rounds 50")
+        print(f"  playbook-ml run --domain {args.domain} --batches 3 --rounds 50")

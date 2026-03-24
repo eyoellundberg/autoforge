@@ -1,7 +1,7 @@
 """
 run.py — Tournament orchestration loop.
 
-autoforge run --domain Domain --batches 8 --rounds 200
+playbook-ml run --domain Domain --batches 8 --rounds 200
 """
 
 import json
@@ -59,7 +59,7 @@ def cmd_run(args):
             pass
 
     worker_str = f"{args.workers} workers" if args.workers > 1 else "1 worker"
-    print(f"\nAutoforge — {args.domain}")
+    print(f"\nPlaybook ML — {args.domain}")
     print(f"  {args.rounds} rounds/batch  ·  {args.batches} batches  ·  {worker_str}")
     print()
 
@@ -107,7 +107,7 @@ def cmd_run(args):
             for fix in analysis["simulation_fix_suggestions"][:3]:
                 print(f"      ! {fix}")
         for bt in analysis.get("breakthroughs", []):
-            print(f"      ★ breakthrough: {bt['principle'][:100]}")
+            print(f"\n      \033[93m★ BREAKTHROUGH\033[0m  {bt['principle'][:100]}\n")
 
         hints          = analysis.get("hints", [])
         prior_analysis = {**analysis, "_avg_score": result["avg_score"]}

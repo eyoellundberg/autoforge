@@ -1,11 +1,11 @@
 """
 simulation.py — The scoring function for your domain.
 
-This is the only file that knows what your domain is. Autoforge calls it
+This is the only file that knows what your domain is. Playbook-ml calls it
 to evaluate candidate strategies deterministically — no AI, no randomness
 after the scenario is drawn.
 
-REQUIRED EXPORTS (Autoforge reads these directly):
+REQUIRED EXPORTS (Playbook-ml reads these directly):
   - simulate(candidate, state) -> float      score a candidate against a scenario
   - random_state() -> dict                   draw a random scenario
   - CANDIDATE_SCHEMA: dict                   JSON schema for a candidate strategy
@@ -21,7 +21,7 @@ from pathlib import Path
 # Place CSV/JSON files in data/ alongside this file.
 # random_state() samples from real distributions instead of synthetic ones.
 # simulate() can reference real lookup tables or calibration data.
-# Autoforge never reads data/ directly — only simulation.py touches it.
+# Playbook-ml never reads data/ directly — only simulation.py touches it.
 #
 # Pattern for loading a CSV once at module load:
 #
@@ -49,7 +49,7 @@ from pathlib import Path
 
 # ── What a candidate strategy looks like ─────────────────────────────────────
 #
-# This schema tells Autoforge (and Sonnet) what shape a strategy has.
+# This schema tells Playbook-ml (and Sonnet) what shape a strategy has.
 # The AI generates candidates that match this schema exactly.
 # Be as specific as you can — vague schemas produce vague strategies.
 #
@@ -81,13 +81,13 @@ METRIC_NAME = "score"  # e.g. "profit", "revpar", "accuracy", "throughput"
 # ── Scenario generation ───────────────────────────────────────────────────────
 #
 # Draw a random scenario from your domain's distribution.
-# Autoforge calls this once per round to generate the test case.
+# Playbook-ml calls this once per round to generate the test case.
 # Keep it realistic — the sim is only as good as its scenario variety.
 #
 def random_state() -> dict:
     """
     Return a dict describing a single scenario.
-    Autoforge passes this to simulate() along with the candidate strategy.
+    Playbook-ml passes this to simulate() along with the candidate strategy.
 
     Example keys: demand level, competition, time period, context flags.
     """

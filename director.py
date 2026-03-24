@@ -11,7 +11,7 @@ from pathlib import Path
 from api import structured_ai_call
 from utils import load_world_model, normalize_confidence
 
-MODEL_DIRECTOR = os.environ.get("AUTOFORGE_DIRECTOR_MODEL", "claude-opus-4-6")
+MODEL_DIRECTOR = os.environ.get("PLAYBOOK_ML_DIRECTOR_MODEL", "claude-opus-4-6")
 
 
 DIRECTOR_SCHEMA = {

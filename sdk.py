@@ -1,9 +1,9 @@
 """
-sdk.py — AutoForge Python SDK.
+sdk.py — Playbook-ml Python SDK.
 
 Lets you call the engine inline without a domain folder:
 
-    from autoforge import run
+    from playbook_ml import run
 
     champion = run(
         simulate=my_score_fn,
@@ -27,7 +27,7 @@ from typing import Callable
 
 
 class Champion:
-    """Result returned by autoforge.run()."""
+    """Result returned by playbook_ml.run()."""
 
     def __init__(self, data: dict, result: dict):
         self.strategy   = data.get("strategy", {})
@@ -57,7 +57,7 @@ def run(
     api_key: str | None = None,
 ) -> Champion:
     """
-    Run AutoForge with inline Python functions. No domain folder needed.
+    Run Playbook ML with inline Python functions. No domain folder needed.
 
     Parameters
     ----------
@@ -119,7 +119,7 @@ def run(
     hints  = []
     result = {}
 
-    with tempfile.TemporaryDirectory(prefix="autoforge_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="playbook_ml_") as tmp:
         domain_path = Path(tmp)
 
         # Write mission so the brain has context
@@ -131,7 +131,7 @@ def run(
 
         if verbose:
             mode = "brain" if brain else "evolutionary"
-            print(f"autoforge  {batches} batches × {rounds} rounds  [{mode}]")
+            print(f"playbook-ml  {batches} batches × {rounds} rounds  [{mode}]")
 
         for batch_num in range(1, batches + 1):
             result = run_batch(

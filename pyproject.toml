@@ -1,6 +1,6 @@
 [project]
-name = "autoforge"
-version = "0.1.0"
+name = "playbook-ml"
+version = "0.1.4"
 description = "Describe a decision. Get a deployed specialist. No labeled data."
 readme = "README.md"
 license = { text = "MIT" }
@@ -19,15 +19,18 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-train = ["mlx", "mlx-lm"]
+train = [
+  "mlx",
+  "mlx-lm",
+]
 
 [project.urls]
-Homepage = "https://github.com/autoforge/autoforge"
-Documentation = "https://github.com/autoforge/autoforge/wiki"
-Issues = "https://github.com/autoforge/autoforge/issues"
+Homepage = "https://github.com/eyoellundberg/playbook-ml"
+Documentation = "https://github.com/eyoellundberg/playbook-ml/wiki"
+Issues = "https://github.com/eyoellundberg/playbook-ml/issues"
 
 [project.scripts]
-autoforge = "cli:main"
+playbook-ml = "cli:main"
 
 [build-system]
 requires = ["hatchling"]

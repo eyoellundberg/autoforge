@@ -1,5 +1,5 @@
 """
-Specialist — standalone inference. No Autoforge dependency.
+Specialist — standalone inference. No Playbook-ml dependency.
 
 Usage:
     from specialist.ask import ask, record

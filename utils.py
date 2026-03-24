@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 ENGINE_ROOT   = Path(__file__).parent
-DOMAINS_ROOT  = Path.home() / ".autoforge"
+DOMAINS_ROOT  = Path.home() / ".playbook-ml"
 DOMAINS_ROOT.mkdir(exist_ok=True)
 
 

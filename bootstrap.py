@@ -2,10 +2,13 @@
 bootstrap.py — cmd_bootstrap: generate a new domain from a description.
 """
 
+import itertools
 import json
 import os
 import shutil
 import sys
+import threading
+import time
 
 from utils import ENGINE_ROOT, DOMAINS_ROOT
 from director import BOOTSTRAP_SCHEMA
@@ -54,7 +57,7 @@ def cmd_bootstrap(args):
         print(f"\nNext:")
         print(f"  1. Edit {args.domain}/world_model.md")
         print(f"  2. Edit {args.domain}/simulation.py")
-        print(f"  3. autoforge run --domain {args.domain}")
+        print(f"  3. playbook-ml run --domain {args.domain}")
         return
 
     if not args.description:
@@ -62,7 +65,7 @@ def cmd_bootstrap(args):
         sys.exit(1)
 
     if getattr(args, "manual_ai", False):
-        os.environ["AUTOFORGE_AI_BACKEND"] = "manual"
+        os.environ["PLAYBOOK_ML_AI_BACKEND"] = "manual"
 
     # ── Preview: cheap Haiku call to outline the domain design ────────────────
     if not getattr(args, "yes", False):
@@ -81,7 +84,7 @@ def cmd_bootstrap(args):
             preview = structured_ai_call(
                 task_name="preview",
                 domain_path=ENGINE_ROOT,
-                model=os.environ.get("AUTOFORGE_EXTRACT_MODEL", "claude-haiku-4-5-20251001"),
+                model=os.environ.get("PLAYBOOK_ML_EXTRACT_MODEL", "claude-haiku-4-5-20251001"),
                 max_tokens=512,
                 system_prompt=preview_system,
                 user_prompt=preview_user,
@@ -107,7 +110,7 @@ def cmd_bootstrap(args):
 
     print(f"\nGenerating {args.domain}...")
 
-    system_prompt = """You are a domain expert AND simulation designer for Autoforge, an autonomous strategy learning system.
+    system_prompt = """You are a domain expert AND simulation designer for Playbook ML, an autonomous strategy learning system.
 
 Your job: think deeply about this domain as an expert practitioner, then build a simulation rich enough
 that a learning engine can discover real strategy principles from it.
@@ -194,7 +197,7 @@ Never: [hard constraints — what must never happen]
 Abstain when: [conditions where the specialist should escalate to a human]
 """
 
-    user_prompt = f"""Generate all domain files for Autoforge based on this description:
+    user_prompt = f"""Generate all domain files for Playbook ML based on this description:
 
 {args.description}
 
@@ -210,19 +213,41 @@ Requirements:
 - domain_summary: 1-2 sentence description of what this domain learns
 """
 
+    def _spinner(label: str, stop: threading.Event):
+        frames = itertools.cycle(["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"])
+        start  = time.time()
+        while not stop.is_set():
+            elapsed = int(time.time() - start)
+            sys.stdout.write(f"\r  {next(frames)}  {label}  {elapsed}s")
+            sys.stdout.flush()
+            time.sleep(0.1)
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        sys.stdout.flush()
+
     try:
         backend_domain_path = DOMAINS_ROOT
-        data = structured_ai_call(
-            task_name="bootstrap",
-            domain_path=backend_domain_path,
-            model=os.environ.get("AUTOFORGE_BOOTSTRAP_MODEL", "claude-opus-4-6"),
-            thinking=True,
-            max_tokens=8000,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            schema=BOOTSTRAP_SCHEMA,
-            metadata={"domain": args.domain},
+        _stop = threading.Event()
+        _t    = threading.Thread(
+            target=_spinner,
+            args=("Opus is thinking — building world model...", _stop),
+            daemon=True,
         )
+        _t.start()
+        try:
+            data = structured_ai_call(
+                task_name="bootstrap",
+                domain_path=backend_domain_path,
+                model=os.environ.get("PLAYBOOK_ML_BOOTSTRAP_MODEL", "claude-opus-4-6"),
+                thinking=True,
+                max_tokens=16000,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                schema=BOOTSTRAP_SCHEMA,
+                metadata={"domain": args.domain},
+            )
+        finally:
+            _stop.set()
+            _t.join()
     except Exception as e:
         print(f"Error: bootstrap AI call failed: {e}")
         if domain_path.exists():
@@ -269,7 +294,7 @@ Requirements:
             "author": "",
             "description": data["domain_summary"],
             "metric": data["metric_name"],
-            "autoforge_version": "1.0",
+            "playbook_ml_version": "1.0",
             "evals": "evals/scenarios.jsonl",
         }
         (domain_path / "pack.json").write_text(json.dumps(pack, indent=2) + "\n")
@@ -308,13 +333,13 @@ Requirements:
 
     if errors:
         print(f"\n! Simulation has errors — review {args.domain}/simulation.py before running.")
-        print(f"  autoforge validate --domain {args.domain}   # re-check after edits")
+        print(f"  playbook-ml validate --domain {args.domain}   # re-check after edits")
     else:
         print(f"""
 Next:
   1. Review {args.domain}/world_model.md  — the steering document for the learning loop
   2. Review {args.domain}/simulation.py   — check the variables look right for your domain
 
-  autoforge calibrate --domain {args.domain}        # check score range + no single winner
-  autoforge {args.domain}                           # run the full training pipeline
+  playbook-ml calibrate --domain {args.domain}        # check score range + no single winner
+  playbook-ml {args.domain}                           # run the full training pipeline
 """)

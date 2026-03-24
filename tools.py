@@ -157,7 +157,7 @@ def cmd_pack(args):
         pack = {
             "name": args.domain, "version": "1.0.0", "author": "",
             "description": "", "metric": metric,
-            "autoforge_version": "1.0", "evals": "evals/scenarios.jsonl",
+            "playbook_ml_version": "1.0", "evals": "evals/scenarios.jsonl",
         }
         pack_path.write_text(json.dumps(pack, indent=2) + "\n")
         print(f"  Created pack.json (edit version/author/description before sharing)")
@@ -187,7 +187,7 @@ def cmd_pack(args):
     print(f"\nPacked {args.domain} → {zip_name}  ({size_kb} KB)")
     for f in [r for r in include if (domain_path / r).exists()]:
         print(f"  {f}")
-    print(f"\nShare {zip_name} — install with: autoforge install {zip_name}")
+    print(f"\nShare {zip_name} — install with: playbook-ml install {zip_name}")
 
 
 def cmd_install(args):
@@ -230,9 +230,9 @@ def cmd_install(args):
         print(f"\nInstalled: {domain_name}")
 
     print(f"\nNext steps:")
-    print(f"  autoforge calibrate --domain {domain_name}")
-    print(f"  autoforge run --domain {domain_name} --batches 5 --rounds 100")
-    print(f"  autoforge eval --domain {domain_name}")
+    print(f"  playbook-ml calibrate --domain {domain_name}")
+    print(f"  playbook-ml run --domain {domain_name} --batches 5 --rounds 100")
+    print(f"  playbook-ml eval --domain {domain_name}")
 
 
 def cmd_eval(args):
@@ -329,13 +329,33 @@ def cmd_generate_evals(args):
         print(f"\nGenerated {len(scenarios)} eval scenarios in {args.domain}/evals/scenarios.jsonl")
         for s in scenarios:
             print(f"  {s['id']}: {s['description'][:60]}")
-        print(f"\nRun evals:  autoforge eval --domain {args.domain}")
+        print(f"\nRun evals:  playbook-ml eval --domain {args.domain}")
 
+
+
+def _ensure_mlx() -> bool:
+    """Install mlx and mlx-lm if on Apple Silicon and not already present."""
+    import platform, subprocess
+    try:
+        import mlx  # noqa: F401
+        import mlx_lm  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    if not (sys.platform == "darwin" and platform.machine() == "arm64"):
+        print("Fine-tuning requires Apple Silicon (mlx). Skipping.")
+        return False
+    print("Installing mlx and mlx-lm for Apple Silicon...\n")
+    subprocess.run([sys.executable, "-m", "pip", "install", "mlx", "mlx-lm"], check=True)
+    return True
 
 
 def cmd_train(args):
     """Fine-tune Qwen3-4B on tournament data via LoRA (Apple Silicon / MLX)."""
     import subprocess
+
+    if not _ensure_mlx():
+        sys.exit(1)
 
     domain_path = DOMAINS_ROOT / args.domain
     if not domain_path.exists():
@@ -362,19 +382,15 @@ def cmd_train(args):
     print(f"  {n} training examples  ·  500 iterations  ·  LoRA")
     print(f"  Estimated time: 15–30 min on Apple Silicon\n")
 
-    try:
-        subprocess.run([
-            sys.executable, "-m", "mlx_lm.lora",
-            "--model", model_id,
-            "--train",
-            "--data", str(domain_path),
-            "--iters", "500",
-            "--batch-size", "2",
-            "--adapter-path", str(adapter_path),
-        ], check=True)
-    except FileNotFoundError:
-        print("mlx_lm not found — install with: pip install mlx mlx-lm")
-        sys.exit(1)
+    subprocess.run([
+        sys.executable, "-m", "mlx_lm.lora",
+        "--model", model_id,
+        "--train",
+        "--data", str(domain_path),
+        "--iters", "500",
+        "--batch-size", "2",
+        "--adapter-path", str(adapter_path),
+    ], check=True)
 
     print(f"\nFusing adapter into model...")
     spec_dir.mkdir(exist_ok=True)
@@ -521,7 +537,7 @@ def cmd_import(args):
     print(f"\nImported {len(records)} records.")
     print(f"  production_log.jsonl — provenance trail")
     print(f"  tournament_log.jsonl — {len(records)} records added to Stage 3 training data")
-    print(f"\nRun 'autoforge export --domain {args.domain}' to include in Stage 3.")
+    print(f"\nRun 'playbook-ml export --domain {args.domain}' to include in Stage 3.")
 
 
 def cmd_ask(args):
@@ -534,7 +550,7 @@ def cmd_ask(args):
 
     if not ask_path.exists():
         print(f"No specialist found for {args.domain}.")
-        print(f"Run: autoforge train --domain {args.domain}")
+        print(f"Run: playbook-ml train --domain {args.domain}")
         sys.exit(1)
 
     spec = importlib.util.spec_from_file_location("specialist_ask", ask_path)

@@ -4,6 +4,6 @@
   "author": "",
   "description": "",
   "metric": "",
-  "autoforge_version": "1.0",
+  "playbook_ml_version": "1.0",
   "evals": "evals/scenarios.jsonl"
 }

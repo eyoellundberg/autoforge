@@ -17,8 +17,8 @@ from utils import (
     normalize_confidence, normalize_playbook_entry,
 )
 
-MODEL_LIBRARY  = os.environ.get("AUTOFORGE_LIBRARY_MODEL", "claude-sonnet-4-6")
-MODEL_EXTRACT  = os.environ.get("AUTOFORGE_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
+MODEL_LIBRARY  = os.environ.get("PLAYBOOK_ML_LIBRARY_MODEL", "claude-sonnet-4-6")
+MODEL_EXTRACT  = os.environ.get("PLAYBOOK_ML_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
 
 
 def _sanitize_for_api(schema: dict) -> dict:

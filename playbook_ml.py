@@ -1,7 +1,7 @@
 """
-autoforge — public Python API.
+playbook-ml — public Python API.
 
-    from autoforge import run
+    from playbook_ml import run
 
     champion = run(
         simulate=my_score_fn,

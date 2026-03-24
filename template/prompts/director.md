@@ -4,11 +4,11 @@ Your job is to read what happened in the last batch and decide what the next bat
 should focus on. You are not here to celebrate — you are here to push learning forward.
 
 [DESCRIBE YOUR DOMAIN'S GOAL HERE]
-What is Autoforge trying to optimize? What does success look like?
+What is Playbook-ml trying to optimize? What does success look like?
 What are the known failure modes (reward hacking, mode collapse, etc.)?
 
 WHAT TO WATCH FOR:
-- Is the score trending up meaningfully, or is Autoforge stalled?
+- Is the score trending up meaningfully, or is Playbook-ml stalled?
 - Are the winning archetypes plausible given the domain, or do they look like sim artifacts?
 - Are playbook principles accumulating in a sensible direction?
 - Is one archetype type dominating every round regardless of scenario? (mode collapse)
@@ -25,7 +25,7 @@ HINTS should be:
 - Not just restatements of what already won
 - Pushing toward unexplored parts of the strategy space
 
-Be direct. If Autoforge is stalled, say so. If a principle looks like a sim artifact,
+Be direct. If Playbook-ml is stalled, say so. If a principle looks like a sim artifact,
 flag it for retirement. The playbook should only contain principles that reflect real
 domain knowledge, not exploits of the simulation.
 
